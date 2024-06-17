@@ -1,0 +1,48 @@
+name: PR Checks
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        default: ubuntu-latest
+        required: false
+        type: string
+    secrets:
+      SLACK_BOT_TOKEN:
+        description: |
+          The slack bot token to authorize with slack.
+        required: true
+
+jobs:
+  validate-pr:
+    if: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' }}
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+    - name: Validate Source Branch
+      run: |
+        if [[ ! ${{ github.head_ref }} =~ ^(hotfix/|release/) ]]; then
+          echo "Error: Source branch is not matching pattern release/* or hotfix/*"
+          exit 2
+        fi
+
+  notify-pr-events:
+    if: ${{ inputs.bu == 'ct' }}
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - name: Checkout CODEOWNERS file
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            CODEOWNERS
+
+        ## Get the list of codeowners
+      - run: echo "owners=$(cat CODEOWNERS | grep '* @' | awk -F'/' '{print $2}')" >> $GITHUB_ENV
+
+        ## Notify the PR details to codeowners on slack
+      - name: Notify PR Event
+        uses: slackapi/slack-github-action@v1.25
+        with:
+          channel-id: "pull-request-${{ github.base_ref }}"
+          slack-message: "PULL_REQUEST <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}> ${{ github.event.action }} in <${{ github.event.repository.html_url}}|${{ github.repository }}> by ${{ github.event.pull_request.user.login }} @${{ env.owners}}"
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}

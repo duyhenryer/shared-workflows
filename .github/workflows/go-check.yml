@@ -1,0 +1,104 @@
+name: Go Check
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        default: ubuntu-latest
+        required: false
+        type: string
+      command-test:
+        required: true
+        type: string
+      setup-go:
+        required: false
+        type: boolean
+        default: true
+        description: Indicate whether should install go or not. Default is true
+      gomod-path:
+        required: false
+        type: string
+        default: "go.mod"
+        description: Indicate the path of go.mod file. Default is go.mod
+      lint:
+        required: false
+        type: boolean
+        default: false
+        description: Indicate whether should run golint or not. Default is false
+      lint-path:
+        required: false
+        type: string
+        default: ".golangci.yml"
+        description: Indicate the path of lint config file. Default is .golangci.yml
+      lint-timeout:
+        required: false
+        type: string
+        default: 10m
+        description: Indicate the timeout of golangci-lint. Default is 10 minutes
+
+
+jobs:
+  # Run test
+  test:
+    name: Test
+    timeout-minutes: 60
+    runs-on: ${{ inputs.runs-on }}
+    if: github.event_name == 'pull_request'
+    # [Required] get output from initial job
+    needs: initial
+    env:
+      INITIAL_OUTPUT: ${{ needs.initial.outputs.INITIAL_OUTPUT }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup go
+        uses: actions/setup-go@v4
+        if: ${{ inputs.setup-go == true }}
+        with:
+          go-version-file: ${{ inputs.gomod-path }}
+
+      - name: "Unit Test"
+        run: runner_test
+        env:
+          COMMAND_TEST: ${{ inputs.command-test }}
+
+  # Run lint
+  lint:
+    name: Lint
+    timeout-minutes: 30
+    runs-on: ${{ inputs.runs-on }}
+    if: github.event_name == 'pull_request' && inputs.lint
+    needs: initial
+    env:
+      INITIAL_OUTPUT: ${{ needs.initial.outputs.INITIAL_OUTPUT }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: ${{ inputs.gomod-path }}
+          cache: false
+
+      # fix typecheck fails https://github.com/golangci/golangci-lint-action/issues/902
+      - name: Download dependencies
+        run: |
+          go mod download
+
+      - name: Lint check
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: v1.55
+          args: --timeout=${{ inputs.lint-timeout }}
+            --config=${{ inputs.lint-path }}
+  
+  status:
+    name: Status
+    uses: ./.github/workflows/status.yml
+    if: ${{ always() }}
+    secrets: inherit

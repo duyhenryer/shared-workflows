@@ -1,0 +1,103 @@
+name: Check CI Status
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        default: ubuntu-latest
+        required: false
+        type: string
+      slack_msg:
+        description: |
+          Message to be posted to the slack for build result.
+        type: string
+        default: "Build <${{ github.event.repository.html_url}}/actions/runs/${{ github.run_id }}|#${{ github.run_number }}> of <${{ github.event.repository.html_url}}|${{ github.repository }}> by ${{ github.actor }}."
+      slack_channel_id:
+        description: |
+          Name of the slack channel to post the message in.
+        type: string
+        default: ""
+
+jobs:
+  workflow-status:
+    runs-on: ${{ inputs.runs-on }}
+    if: ${{ always() }}
+    outputs:
+      status: ${{ steps.fetch-workflow-status.outputs.status }}
+    steps:
+      - uses: actions/github-script@v7
+        id: fetch-workflow-status
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const jobs = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId
+            });
+            
+            const allowedFailedJobs = [
+              "unit-tests / unit-tests (stable)",
+            ]
+            
+            // Get failed jobs count, excluding allowed failed jobs
+            const failedJobsCount = jobs.data.jobs.filter(job => job.status === "completed" && job.conclusion === "failure" && !allowedFailedJobs.includes(job.name)).length;
+            const cancelledJobsCount = jobs.data.jobs.filter(job => job.status === "completed" && job.conclusion === "cancelled").length;
+            
+            // Get workflow status based on failed and cancelled jobs count
+            const workflowStatus = failedJobsCount > 0 ? "failed" : cancelledJobsCount > 0 ? "cancelled" : "success";
+            core.setOutput("status", workflowStatus);
+            
+            // Write summary
+            var jobHeader = [[{data: 'Name', header: true}, {data: 'Result', header: true, colspan: 2}]]
+            var jobResults = jobs.data.jobs.filter(job => job.status == 'completed' || job.status == 'skipped').map(job => {
+              return [
+                '<a href="' + job.html_url + '">' + job.name + '</a>',
+                job.status == 'completed' ? (job.conclusion == 'success' ? '✅' : job.conclusion == 'cancelled' ? '⚪' : job.conclusion == 'failure' ? (allowedFailedJobs.includes(job.name) ? '⚠️' : '❌') : '⚪'): '⚪',
+                job.status == 'completed' ? job.conclusion : job.status,
+              ]
+            })
+            var jobTable = jobHeader.concat(jobResults)
+            await core.summary
+              .addHeading('Workflow Status')
+              .addTable(jobTable)
+              .write()
+            
+            // Set failed if workflow status is failed
+            if (workflowStatus == "failed") {
+              const failedJobs = jobs.data.jobs.filter(job => job.status === "completed" && job.conclusion === "failure" && !allowedFailedJobs.includes(job.name));
+              core.setFailed("Workflow marked as failed due to failed jobs: " + failedJobs.map(job => job.name).join(", "))
+            }
+
+  notify:
+    runs-on: ${{ inputs.runs-on }}
+    if: ${{ always() }}
+    needs:
+      - workflow-status
+    steps:
+      - name: Slack channel
+        uses: actions/github-script@v7
+        id: slack-channel
+        with:
+          script: |
+            const inputs = ${{ toJSON(inputs) }}
+            
+            var slack_channel_id = inputs.slack_channel_id
+            if (slack_channel_id == "") {
+              const channelMappings = new Map()
+              channelMappings.set('#ci-alert')
+            }
+            console.log(slack_channel_id);
+            core.setOutput('slack_channel_id', slack_channel_id);
+
+      - name: Format Slack message
+        run: |
+          echo "status=`echo ${{ needs.workflow-status.outputs.status }} | tr [:lower:] [:upper:];`" >> $GITHUB_ENV
+
+      - name: Notify CI Status
+        uses: slackapi/slack-github-action@v1.25
+        with:
+          channel-id: ${{ steps.slack-channel.outputs.slack_channel_id }}
+          slack-message: "${{ env.status }} : ${{ inputs.slack_msg }}"
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}

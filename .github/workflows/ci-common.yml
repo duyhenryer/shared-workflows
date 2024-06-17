@@ -1,0 +1,11 @@
+name: Common Checks
+
+on:
+  workflow_call:
+
+jobs:
+  pr-checks:
+    if: ${{ github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/pr-checks.yml
+    secrets: inherit
+      
