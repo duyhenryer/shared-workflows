@@ -1,4 +1,3 @@
----
 name: 'wolfictl-update-gh'
 description: |
   Wolfictl Update From GitHub.
@@ -8,22 +7,18 @@ inputs:
     description: |
       GitHub repository to use org/repo.
     required: true
-    default: ""
   token:
     description: |
       GitHub Token or OctoSts token.
     required: true
-    default: ""
   git_author_name:
     description: |
       Author name to commit.
     required: true
-    default: ""
   git_author_email:
     description: |
       Author emails to commit.
     required: true
-    default: ""
 
 runs:
   using: 'docker'
