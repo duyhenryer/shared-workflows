@@ -54,7 +54,7 @@ jobs:
       INITIAL_OUTPUT: ${{ needs.initial.outputs.INITIAL_OUTPUT }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup go
         uses: actions/setup-go@v4
@@ -78,7 +78,7 @@ jobs:
       INITIAL_OUTPUT: ${{ needs.initial.outputs.INITIAL_OUTPUT }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Setup go
         uses: actions/setup-go@v4
         with:
