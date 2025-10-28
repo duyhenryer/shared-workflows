@@ -1,0 +1,29 @@
+# Ignore local workflow runs and temporary files
+.github/workflows/*.local.yml
+.github/workflows/*.tmp.yml
+.github/workflows/*.bak.yml
+.github/workflows/*.test.yml
+
+# Ignore any generated workflow artifacts or logs
+.github/actions/cache/
+.github/actions/tmp/
+.github/actions/logs/
+.github/actions/secrets/
+
+# Node.js actions (if you build custom JS actions)
+node_modules/
+dist/
+*.log
+
+# Python actions
+__pycache__/
+*.pyc
+.venv/
+
+# Docker actions
+*.tar
+*.img
+
+# macOS / Linux / Windows temp files
+.DS_Store
+Thumbs.db

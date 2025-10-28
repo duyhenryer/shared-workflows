@@ -1,0 +1,70 @@
+name: Lint (Terraform)
+
+on:
+  workflow_call:
+    inputs:
+      tflint_config_path:
+        required: false
+        type: string
+      tflint_minimum_failure_severity:
+        required: false
+        type: string
+        default: warning
+      tflint_force:
+        required: false
+        type: boolean
+        default: false
+
+# TODO: Add job for `terraform validate`
+jobs:
+  terraform-fmt:
+      name: terraform fmt
+      runs-on: ubuntu-latest
+
+      permissions:
+        contents: read
+
+      steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@a1502cd9e758c50496cc9ac5308c4843bcd56d36 # v3.0.0
+
+      - name: terraform fmt
+        run: terraform fmt -no-color -check -diff -recursive
+  tflint:
+      name: TFLint
+      runs-on: ubuntu-latest
+
+      permissions:
+        contents: read
+
+      steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache plugin dir
+        uses: actions/cache@v4
+        with:
+          path: ~/.tflint.d/plugins
+          key: tflint-${{ hashFiles('.tflint.hcl') }}
+
+      - name: Set config path
+        if: inputs.tflint_config_path != ''
+        run: echo "TFLINT_CONFIG_FILE=${{ inputs.tflint_config_path }}" >> $GITHUB_ENV
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@19a52fbac37dacb22a09518e4ef6ee234f2d4987 # v4.0.0
+
+      - name: Show version
+        run: tflint --version
+
+      - name: Init TFLint
+        run: tflint --init
+
+      - name: Run TFLint
+        env:
+          MIN_FAILURE_SEVERITY: --minimum-failure-severity=${{ inputs.tflint_minimum_failure_severity }}
+          FORCE: ${{ inputs.tflint_force && '--force' || '' }}
+        run: tflint -f compact --recursive $MIN_FAILURE_SEVERITY $FORCE
