@@ -1,4 +1,4 @@
-# 🔄 Shared GitHub Actions Reusable Workflows
+# Shared GA - Reusable Workflows
 
 > Centralized reusable workflows for consistent CI/CD across all repositories
 
