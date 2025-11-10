@@ -91,7 +91,7 @@ jobs:
           go mod download
 
       - name: Lint check
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v1.55
           args: --timeout=${{ inputs.lint-timeout }}
