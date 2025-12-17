@@ -48,10 +48,6 @@ jobs:
     timeout-minutes: 60
     runs-on: ${{ inputs.runs-on }}
     if: github.event_name == 'pull_request'
-    # [Required] get output from initial job
-    needs: initial
-    env:
-      INITIAL_OUTPUT: ${{ needs.initial.outputs.INITIAL_OUTPUT }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -63,9 +59,7 @@ jobs:
           go-version-file: ${{ inputs.gomod-path }}
 
       - name: "Unit Test"
-        run: runner_test
-        env:
-          COMMAND_TEST: ${{ inputs.command-test }}
+        run: ${{ inputs.command-test }}
 
   # Run lint
   lint:
@@ -73,9 +67,6 @@ jobs:
     timeout-minutes: 30
     runs-on: ${{ inputs.runs-on }}
     if: github.event_name == 'pull_request' && inputs.lint
-    needs: initial
-    env:
-      INITIAL_OUTPUT: ${{ needs.initial.outputs.INITIAL_OUTPUT }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
