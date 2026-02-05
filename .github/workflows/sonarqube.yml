@@ -54,7 +54,7 @@ on:
     secrets:
       SONAR_TOKEN:
         description: 'SonarCloud authentication token'
-        required: true
+        required: false
 
 jobs:
   sonarcloud:
