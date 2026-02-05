@@ -137,6 +137,128 @@ jobs:
 
 ---
 
+## 🐳 docker-build.yml
+
+**Purpose:** Docker image build, push to GHCR, and Cosign signing  
+**Trigger:** workflow_call  
+**Features:** Multi-platform builds, Cosign keyless signing, SBOM generation, GitHub Cache
+
+### Inputs
+
+| Parameter | Type | Default | Required | Description |
+|-----------|------|---------|----------|-------------|
+| `image-name` | string | - | **Yes** | Name of the Docker image |
+| `dockerfile` | string | `"Dockerfile"` | No | Path to Dockerfile |
+| `context` | string | `"."` | No | Docker build context |
+| `push` | boolean | `false` | No | Push image to registry |
+| `platforms` | string | `"linux/amd64"` | No | Target platforms |
+| `build-args` | string | `""` | No | Build-time variables |
+| `tags` | string | `""` | No | Custom tags (comma-separated) |
+| `cosign` | boolean | `true` | No | Sign with Cosign |
+| `sbom` | boolean | `false` | No | Generate SBOM attestation |
+| `runs-on` | string | `"ubuntu-latest"` | No | Runner type |
+
+### Outputs
+
+| Output | Description |
+|--------|-------------|
+| `image` | Full image tags |
+| `digest` | Image digest |
+
+### Usage
+
+**Basic (PR validation):**
+```yaml
+jobs:
+  docker:
+    uses: duyhenryer/shared-workflows/.github/workflows/docker-build.yml@main
+    with:
+      image-name: 'my-service'
+    secrets: inherit
+```
+
+**Push to GHCR:**
+```yaml
+jobs:
+  docker:
+    uses: duyhenryer/shared-workflows/.github/workflows/docker-build.yml@main
+    with:
+      image-name: 'my-service'
+      push: true
+      cosign: true
+    secrets: inherit
+```
+
+**Multi-platform with SBOM:**
+```yaml
+jobs:
+  docker:
+    uses: duyhenryer/shared-workflows/.github/workflows/docker-build.yml@main
+    with:
+      image-name: 'my-service'
+      push: true
+      platforms: 'linux/amd64,linux/arm64'
+      sbom: true
+    secrets: inherit
+```
+
+---
+
+## 🔬 sonarqube.yml
+
+**Purpose:** SonarCloud code analysis with Go coverage  
+**Trigger:** workflow_call  
+**Features:** Go test coverage, SonarCloud scan, Quality Gate check
+
+### Inputs
+
+| Parameter | Type | Default | Required | Description |
+|-----------|------|---------|----------|-------------|
+| `project-key` | string | - | **Yes** | SonarCloud project key |
+| `organization` | string | - | **Yes** | SonarCloud organization |
+| `sources` | string | `"."` | No | Source directories |
+| `exclusions` | string | `"**/vendor/**,..."` | No | Patterns to exclude |
+| `go-version` | string | `"1.25"` | No | Go version |
+| `coverage-path` | string | `"coverage.out"` | No | Coverage file path |
+| `test-command` | string | `"go test ..."` | No | Test command |
+| `quality-gate-wait` | boolean | `true` | No | Wait for Quality Gate |
+| `quality-gate-timeout` | number | `300` | No | QG timeout (seconds) |
+| `runs-on` | string | `"ubuntu-latest"` | No | Runner type |
+
+### Required Secrets
+
+| Secret | Description |
+|--------|-------------|
+| `SONAR_TOKEN` | SonarCloud authentication token |
+
+### Usage
+
+**Basic:**
+```yaml
+jobs:
+  sonar:
+    uses: duyhenryer/shared-workflows/.github/workflows/sonarqube.yml@main
+    with:
+      project-key: 'duynhne_my-service'
+      organization: 'duynhne'
+    secrets: inherit
+```
+
+**Custom test command:**
+```yaml
+jobs:
+  sonar:
+    uses: duyhenryer/shared-workflows/.github/workflows/sonarqube.yml@main
+    with:
+      project-key: 'duynhne_my-service'
+      organization: 'duynhne'
+      test-command: 'go test -race -coverprofile=coverage.out ./...'
+      go-version: '1.25.5'
+    secrets: inherit
+```
+
+---
+
 ## 📢 status.yml
 
 **Purpose:** Build status notifications with detailed reporting  

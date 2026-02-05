@@ -1,0 +1,113 @@
+name: SonarCloud Analysis
+
+on:
+  workflow_call:
+    inputs:
+      project-key:
+        description: 'SonarCloud project key (e.g., org_project-name)'
+        required: true
+        type: string
+      organization:
+        description: 'SonarCloud organization'
+        required: true
+        type: string
+      sources:
+        description: 'Comma-separated paths to source directories'
+        required: false
+        type: string
+        default: '.'
+      exclusions:
+        description: 'Comma-separated patterns to exclude'
+        required: false
+        type: string
+        default: '**/vendor/**,**/node_modules/**,**/*_test.go,**/testdata/**'
+      go-version:
+        description: 'Go version to use'
+        required: false
+        type: string
+        default: '1.25'
+      coverage-path:
+        description: 'Path to Go coverage file'
+        required: false
+        type: string
+        default: 'coverage.out'
+      test-command:
+        description: 'Command to run tests with coverage'
+        required: false
+        type: string
+        default: 'go test -coverprofile=coverage.out -covermode=atomic ./...'
+      runs-on:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      quality-gate-wait:
+        description: 'Wait for Quality Gate result'
+        required: false
+        type: boolean
+        default: true
+      quality-gate-timeout:
+        description: 'Quality Gate polling timeout in seconds'
+        required: false
+        type: number
+        default: 300
+    secrets:
+      SONAR_TOKEN:
+        description: 'SonarCloud authentication token'
+        required: true
+
+jobs:
+  sonarcloud:
+    name: SonarCloud Analysis
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # Full history for proper blame information
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: Run tests with coverage
+        run: ${{ inputs.test-command }}
+
+      - name: SonarCloud Scan
+        uses: sonarsource/sonarqube-scan-action@master
+        with:
+          args: >
+            -Dsonar.projectKey=${{ inputs.project-key }}
+            -Dsonar.organization=${{ inputs.organization }}
+            -Dsonar.sources=${{ inputs.sources }}
+            -Dsonar.exclusions=${{ inputs.exclusions }}
+            -Dsonar.go.coverage.reportPaths=${{ inputs.coverage-path }}
+            -Dsonar.test.inclusions=**/*_test.go
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+
+      - name: SonarCloud Quality Gate
+        if: inputs.quality-gate-wait
+        uses: sonarsource/sonarqube-quality-gate-action@master
+        with:
+          pollingTimeoutSec: ${{ inputs.quality-gate-timeout }}
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Quality Gate Status
+        if: always()
+        run: |
+          echo "## 🔍 SonarCloud Analysis Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Project Key | \`${{ inputs.project-key }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Organization | \`${{ inputs.organization }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dashboard | [View on SonarCloud](https://sonarcloud.io/project/overview?id=${{ inputs.project-key }}) |" >> $GITHUB_STEP_SUMMARY

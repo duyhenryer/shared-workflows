@@ -27,6 +27,8 @@ jobs:
 |----------|---------|----------|
 | **[ci-common.yml](.github/workflows/ci-common.yml)** | Common CI checks | PR validation, notifications |
 | **[go-check.yml](.github/workflows/go-check.yml)** | Go code quality | Tests, linting, status reporting |
+| **[docker-build.yml](.github/workflows/docker-build.yml)** | Docker build & push | GHCR, Cosign signing, SBOM |
+| **[sonarqube.yml](.github/workflows/sonarqube.yml)** | SonarCloud analysis | Go coverage, Quality Gate |
 | **[tf-lint.yaml](.github/workflows/tf-lint.yaml)** | Terraform validation | Format check, TFLint analysis |
 | **[status.yml](.github/workflows/status.yml)** | Build notifications | Slack notifications, job summaries |
 | **[pr-checks.yml](.github/workflows/pr-checks.yml)** | PR handling | Branch validation, CODEOWNERS |
