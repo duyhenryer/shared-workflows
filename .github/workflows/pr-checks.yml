@@ -20,9 +20,11 @@ jobs:
     steps:
     - name: Validate Source Branch
       run: |
-        if [[ ! ${{ github.head_ref }} =~ ^(hotfix/|release/) ]]; then
-          echo "Error: Source branch is not matching pattern release/* or hotfix/*"
-          exit 2
+        # Allow standard gitflow/trunk-based prefixes
+        if [[ ! ${{ github.head_ref }} =~ ^(feature|feat|fix|bugfix|hotfix|release|chore|docs|refactor|test|ci|perf|style|build)\/ ]]; then
+          echo "Error: Source branch '${{ github.head_ref }}' does not match allowed patterns (feat/*, fix/*, chore/*, etc.)"
+          echo "Create a new branch with a valid prefix and open a new PR."
+          exit 1
         fi
 
   notify-pr-events:
@@ -35,14 +37,17 @@ jobs:
           sparse-checkout: |
             CODEOWNERS
 
-        ## Get the list of codeowners
+      ## Get the list of codeowners
       - run: echo "owners=$(cat CODEOWNERS | grep '* @' | awk -F'/' '{print $2}')" >> $GITHUB_ENV
 
-        ## Notify the PR details to codeowners on slack
+      ## Notify the PR details to codeowners on slack
       - name: Notify PR Event
-        uses: slackapi/slack-github-action@v2.1
+        uses: slackapi/slack-github-action@v2.1.0
         with:
           channel-id: "pull-request-${{ github.base_ref }}"
-          slack-message: "PULL_REQUEST <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}> ${{ github.event.action }} in <${{ github.event.repository.html_url}}|${{ github.repository }}> by ${{ github.event.pull_request.user.login }} @${{ env.owners}}"
+          payload: |
+            {
+              "text": "PULL_REQUEST <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}> ${{ github.event.action }} in <${{ github.event.repository.html_url}}|${{ github.repository }}> by ${{ github.event.pull_request.user.login }} @${{ env.owners}}"
+            }
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
