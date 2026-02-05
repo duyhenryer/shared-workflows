@@ -51,6 +51,11 @@ on:
         required: false
         type: number
         default: 300
+      fail-on-quality-gate:
+        description: 'Fail the job if Quality Gate fails'
+        required: false
+        type: boolean
+        default: true
     secrets:
       SONAR_TOKEN:
         description: 'SonarCloud authentication token'
@@ -92,6 +97,7 @@ jobs:
       - name: SonarCloud Quality Gate
         if: inputs.quality-gate-wait
         uses: sonarsource/sonarqube-quality-gate-action@master
+        continue-on-error: ${{ !inputs.fail-on-quality-gate }}
         with:
           pollingTimeoutSec: ${{ inputs.quality-gate-timeout }}
         env:
