@@ -96,8 +96,3 @@ jobs:
           args: --timeout=${{ inputs.lint-timeout }}
             --config=${{ inputs.lint-path }}
   
-  status:
-    name: Status
-    uses: ./.github/workflows/status.yml
-    if: ${{ always() }}
-    secrets: inherit
