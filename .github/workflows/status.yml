@@ -95,9 +95,13 @@ jobs:
           echo "status=`echo ${{ needs.workflow-status.outputs.status }} | tr [:lower:] [:upper:];`" >> $GITHUB_ENV
 
       - name: Notify CI Status
+        if: ${{ steps.slack-channel.outputs.slack_channel_id != '' }}
         uses: slackapi/slack-github-action@v2.1
         with:
-          channel-id: ${{ steps.slack-channel.outputs.slack_channel_id }}
-          slack-message: "${{ env.status }} : ${{ inputs.slack_msg }}"
-        env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            {
+              "channel": "${{ steps.slack-channel.outputs.slack_channel_id }}",
+              "text": "${{ env.status }} : ${{ inputs.slack_msg }}"
+            }
