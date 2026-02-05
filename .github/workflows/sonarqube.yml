@@ -79,6 +79,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.artifact-name }}
+          path: .
 
       - name: SonarCloud Scan
         uses: sonarsource/sonarqube-scan-action@master
@@ -89,7 +90,6 @@ jobs:
             -Dsonar.sources=${{ inputs.sources }}
             -Dsonar.exclusions=${{ inputs.exclusions }}
             -Dsonar.go.coverage.reportPaths=${{ inputs.coverage-path }}
-            -Dsonar.test.inclusions=**/*_test.go
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
@@ -100,6 +100,7 @@ jobs:
         continue-on-error: ${{ !inputs.fail-on-quality-gate }}
         with:
           pollingTimeoutSec: ${{ inputs.quality-gate-timeout }}
+          scanMetadataReportFile: .scannerwork/report-task.txt
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
