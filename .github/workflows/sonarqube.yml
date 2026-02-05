@@ -31,11 +31,11 @@ on:
         required: false
         type: string
         default: 'coverage.out'
-      test-command:
-        description: 'Command to run tests with coverage'
+      artifact-name:
+        description: 'Name of the artifact containing coverage report'
         required: false
         type: string
-        default: 'go test -coverprofile=coverage.out -covermode=atomic ./...'
+        default: 'coverage-report'
       runs-on:
         description: 'Runner type'
         required: false
@@ -70,14 +70,10 @@ jobs:
         with:
           fetch-depth: 0  # Full history for proper blame information
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
         with:
-          go-version: ${{ inputs.go-version }}
-          cache: true
-
-      - name: Run tests with coverage
-        run: ${{ inputs.test-command }}
+          name: ${{ inputs.artifact-name }}
 
       - name: SonarCloud Scan
         uses: sonarsource/sonarqube-scan-action@master
