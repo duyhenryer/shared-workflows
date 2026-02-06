@@ -76,13 +76,13 @@ jobs:
           fetch-depth: 0  # Full history for proper blame information
 
       - name: Download coverage report
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # tag: v7.0.0
         with:
           name: ${{ inputs.artifact-name }}
           path: .
 
       - name: SonarCloud Scan
-        uses: sonarsource/sonarqube-scan-action@master
+        uses: sonarsource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9 # tag: v7.0.0
         with:
           args: >
             -Dsonar.projectKey=${{ inputs.project-key }}
@@ -96,7 +96,7 @@ jobs:
 
       - name: SonarCloud Quality Gate
         if: inputs.quality-gate-wait
-        uses: sonarsource/sonarqube-quality-gate-action@master
+        uses: sonarsource/sonarqube-quality-gate-action@cf038b0e0cdecfa9e56c198bbb7d21d751d62c3b # tag: v1.2.0
         continue-on-error: ${{ !inputs.fail-on-quality-gate }}
         with:
           pollingTimeoutSec: ${{ inputs.quality-gate-timeout }}
