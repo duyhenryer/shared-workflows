@@ -111,8 +111,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ inputs.build-args }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}:cache-main
+            type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}:cache-${{ github.ref_name }}
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}:cache-${{ github.ref_name }},mode=max
           provenance: true
           sbom: ${{ inputs.sbom }}
 
@@ -143,3 +145,48 @@ jobs:
           echo "| Digest | \`${{ steps.build.outputs.digest }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Pushed | ${{ inputs.push }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Signed | ${{ inputs.push && inputs.cosign }} |" >> $GITHUB_STEP_SUMMARY
+
+  # Phase 2: Failure Notification
+  failure-notification:
+    name: Failure Notification
+    runs-on: ubuntu-latest
+    if: failure()
+    needs: [build]
+    permissions:
+      contents: read
+
+    steps:
+      - name: Create failure summary
+        run: |
+          echo "## ❌ Docker Build Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository | \`${{ github.repository }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`${{ inputs.image-name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered by | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Workflow | [View Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
+
+      # TODO: Add Slack notification when SLACK_BOT_TOKEN is configured
+      # - name: Send Slack notification
+      #   if: vars.SLACK_CHANNEL_ID != ''
+      #   uses: slackapi/slack-github-action@v1.25
+      #   with:
+      #     channel-id: ${{ vars.SLACK_CHANNEL_ID }}
+      #     payload: |
+      #       {
+      #         "text": "❌ Build failed: `${{ inputs.image-name }}`",
+      #         "attachments": [{
+      #           "color": "danger",
+      #           "fields": [
+      #             {"title": "Repository", "value": "`${{ github.repository }}`", "short": true},
+      #             {"title": "Branch", "value": "`${{ github.ref_name }}`", "short": true},
+      #             {"title": "Actor", "value": "${{ github.actor }}", "short": true},
+      #             {"title": "Logs", "value": "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Workflow>"}
+      #           ]
+      #         }]
+      #       }
+      #   env:
+      #     SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
