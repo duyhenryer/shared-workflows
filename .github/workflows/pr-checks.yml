@@ -11,7 +11,7 @@ on:
       SLACK_BOT_TOKEN:
         description: |
           The slack bot token to authorize with slack.
-        required: true
+        required: false
 
 jobs:
   validate-pr:
@@ -28,6 +28,7 @@ jobs:
         fi
 
   notify-pr-events:
+    if: ${{ secrets.SLACK_BOT_TOKEN != '' }}
     runs-on: ${{ inputs.runs-on }}
     steps:
       - name: Checkout CODEOWNERS file
@@ -37,7 +38,14 @@ jobs:
             CODEOWNERS
 
       ## Get the list of codeowners
-      - run: echo "owners=$(cat CODEOWNERS | grep '* @' | awk -F'/' '{print $2}')" >> $GITHUB_ENV
+      - name: Get CODEOWNERS
+        id: codeowners
+        run: |
+          if [ -f CODEOWNERS ]; then
+            echo "owners=$(cat CODEOWNERS | grep '* @' | awk -F'/' '{print $2}')" >> $GITHUB_ENV
+          else
+            echo "owners=" >> $GITHUB_ENV
+          fi
 
       ## Notify the PR details to codeowners on slack
       - name: Notify PR Event
