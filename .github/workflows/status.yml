@@ -17,6 +17,13 @@ on:
           Name of the slack channel to post the message in.
         type: string
         default: ""
+      slack_thread_ts:
+        description: |
+          Slack thread timestamp for update and reply (from pr-checks output).
+          If provided, updates the original message and replies in thread.
+        type: string
+        required: false
+        default: ""
     secrets:
       SLACK_BOT_TOKEN:
         description: "Slack bot token for notifications"
@@ -98,19 +105,20 @@ jobs:
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
 
 
-      - name: Format Slack message
-        run: |
-          echo "status=`echo ${{ needs.workflow-status.outputs.status }} | tr [:lower:] [:upper:];`" >> $GITHUB_ENV
-
-      - name: Notify CI Status
-        if: ${{ steps.slack-channel.outputs.slack_channel_id != '' }}
-        uses: slackapi/slack-github-action@v2.1.1
+      - name: Checkout shared-workflows (for composite action)
+        uses: actions/checkout@v6
         with:
-          method: chat.postMessage
-          errors: true
-          token: ${{ secrets.SLACK_BOT_TOKEN }}
-          payload: |
-            {
-              "channel": "${{ steps.slack-channel.outputs.slack_channel_id }}",
-              "text": "${{ env.status }} : ${{ inputs.slack_msg }}"
-            }
+          repository: duyhenryer/shared-workflows
+          path: .shared-workflows
+          sparse-checkout: |
+            .github/actions/slack-ci-notification
+
+      - name: Slack CI Notification
+        if: ${{ steps.slack-channel.outputs.slack_channel_id != '' }}
+        uses: ./.shared-workflows/.github/actions/slack-ci-notification
+        with:
+          channel_id: ${{ steps.slack-channel.outputs.slack_channel_id }}
+          status: ${{ needs.workflow-status.outputs.status }}
+          update_ts: ${{ inputs.slack_thread_ts }}
+          thread_ts: ${{ inputs.slack_thread_ts }}
+          slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}

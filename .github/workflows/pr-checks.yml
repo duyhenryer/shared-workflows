@@ -7,6 +7,10 @@ on:
         default: ubuntu-latest
         required: false
         type: string
+    outputs:
+      slack_thread_ts:
+        description: 'Slack thread timestamp for reply threading and message update'
+        value: ${{ jobs.notify-pr-events.outputs.thread_ts }}
     secrets:
       SLACK_BOT_TOKEN:
         description: |
@@ -33,6 +37,8 @@ jobs:
 
   notify-pr-events:
     runs-on: ${{ inputs.runs-on }}
+    outputs:
+      thread_ts: ${{ steps.slack-notify.outputs.ts }}
     steps:
       - name: Checkout CODEOWNERS file
         uses: actions/checkout@v6
@@ -54,6 +60,7 @@ jobs:
 
       ## Notify the PR details to codeowners on slack
       - name: Notify PR Event
+        id: slack-notify
         uses: slackapi/slack-github-action@v2.1.1
         continue-on-error: true
         with:

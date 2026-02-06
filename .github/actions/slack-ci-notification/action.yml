@@ -1,0 +1,102 @@
+name: Slack CI Notification
+description: |
+  Send CI notification with thread support (update original message + reply in thread).
+  Based on clone-workflow pattern: update_ts updates the original message, thread_ts replies in thread.
+
+inputs:
+  channel_id:
+    required: true
+    description: 'Slack channel ID to send notification to'
+  status:
+    required: true
+    description: 'CI status: success, failed, cancelled, in_progress'
+  update_ts:
+    required: false
+    description: 'Timestamp of message to update. If empty, creates new message.'
+    default: ''
+  thread_ts:
+    required: false
+    description: 'Timestamp of thread to reply to. If empty, uses the sent message thread.'
+    default: ''
+  reply_broadcast:
+    required: false
+    description: 'Whether to broadcast reply to channel'
+    default: 'false'
+  slack_bot_token:
+    required: true
+    description: 'Slack bot token for authentication'
+
+outputs:
+  ts:
+    description: 'Timestamp of sent/updated message'
+    value: ${{ steps.slack-notification.outputs.ts }}
+  thread_ts:
+    description: 'Thread timestamp for subsequent replies'
+    value: ${{ steps.slack-notification.outputs.ts }}
+
+runs:
+  using: composite
+  steps:
+    # Step 1: Send new message OR update existing message
+    - name: Send/Update CI Notification
+      id: slack-notification
+      uses: slackapi/slack-github-action@v2.1.1
+      with:
+        method: ${{ inputs.update_ts != '' && 'chat.update' || 'chat.postMessage' }}
+        token: ${{ inputs.slack_bot_token }}
+        payload: |
+          {
+            "channel": "${{ inputs.channel_id }}",
+            ${{ inputs.update_ts != '' && format('"ts": "{0}",', inputs.update_ts) || '' }}
+            "text": "CI for `${{ github.repository }}` - ${{ inputs.status }}",
+            "attachments": [
+              {
+                "color": "${{ inputs.status == 'success' && 'good' || (inputs.status == 'failed' && 'danger' || (inputs.status == 'cancelled' && 'warning' || '#439FE0')) }}",
+                "fields": [
+                  {
+                    "title": "Status",
+                    "short": true,
+                    "value": "`${{ inputs.status }}`"
+                  },
+                  {
+                    "title": "Branch",
+                    "short": true,
+                    "value": "`${{ github.ref_name }}`"
+                  },
+                  {
+                    "title": "Author",
+                    "short": true,
+                    "value": "${{ github.actor }}"
+                  },
+                  {
+                    "title": "Build",
+                    "short": true,
+                    "value": "#${{ github.run_number }}"
+                  },
+                  {
+                    "title": "Workflow",
+                    "value": "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Logs>"
+                  }
+                ]
+              }
+            ],
+            "link_names": true,
+            "mrkdwn": true
+          }
+
+    # Step 2: Reply in thread with status log (only if thread_ts provided or we just created a message)
+    - name: Reply status in thread
+      if: inputs.thread_ts != '' || steps.slack-notification.outputs.ts != ''
+      uses: slackapi/slack-github-action@v2.1.1
+      with:
+        method: chat.postMessage
+        token: ${{ inputs.slack_bot_token }}
+        payload: |
+          {
+            "channel": "${{ inputs.channel_id }}",
+            "text": "Status: `${{ inputs.status }}` [<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}|Logs>]",
+            "thread_ts": "${{ inputs.thread_ts || steps.slack-notification.outputs.ts }}",
+            "reply_broadcast": ${{ inputs.reply_broadcast }},
+            "link_names": true,
+            "mrkdwn": true
+          }
