@@ -1,7 +1,8 @@
 name: Slack CI Notification
 description: |
-  Send CI notification with thread support (update original message + reply in thread).
-  Based on clone-workflow pattern: update_ts updates the original message, thread_ts replies in thread.
+  Send CI status notification with thread support.
+  - If thread_ts provided: reply in that thread (PR flow)
+  - If thread_ts empty: send standalone message (push to main flow)
 
 inputs:
   channel_id:
@@ -9,49 +10,38 @@ inputs:
     description: 'Slack channel ID to send notification to'
   status:
     required: true
-    description: 'CI status: success, failed, cancelled, in_progress'
-  update_ts:
-    required: false
-    description: 'Timestamp of message to update. If empty, creates new message.'
-    default: ''
+    description: 'CI status: success, failed, cancelled'
   thread_ts:
     required: false
-    description: 'Timestamp of thread to reply to. If empty, uses the sent message thread.'
+    description: 'Slack thread timestamp to reply to (from pr-checks output). If empty, sends standalone message.'
     default: ''
-  reply_broadcast:
-    required: false
-    description: 'Whether to broadcast reply to channel'
-    default: 'false'
   slack_bot_token:
     required: true
     description: 'Slack bot token for authentication'
 
 outputs:
   ts:
-    description: 'Timestamp of sent/updated message'
-    value: ${{ steps.slack-notification.outputs.ts }}
-  thread_ts:
-    description: 'Thread timestamp for subsequent replies'
-    value: ${{ steps.slack-notification.outputs.ts }}
+    description: 'Timestamp of sent message'
+    value: ${{ steps.slack-standalone.outputs.ts || steps.slack-reply.outputs.ts }}
 
 runs:
   using: composite
   steps:
-    # Step 1: Send new message OR update existing message
-    - name: Send/Update CI Notification
-      id: slack-notification
+    # If thread_ts is empty (push to main): send standalone CI status message
+    - name: Send standalone CI status
+      id: slack-standalone
+      if: inputs.thread_ts == ''
       uses: slackapi/slack-github-action@v2.1.1
       with:
-        method: ${{ inputs.update_ts != '' && 'chat.update' || 'chat.postMessage' }}
+        method: chat.postMessage
         token: ${{ inputs.slack_bot_token }}
         payload: |
           {
             "channel": "${{ inputs.channel_id }}",
-            ${{ inputs.update_ts != '' && format('"ts": "{0}",', inputs.update_ts) || '' }}
             "text": "CI for `${{ github.repository }}` - ${{ inputs.status }}",
             "attachments": [
               {
-                "color": "${{ inputs.status == 'success' && 'good' || (inputs.status == 'failed' && 'danger' || (inputs.status == 'cancelled' && 'warning' || '#439FE0')) }}",
+                "color": "${{ inputs.status == 'success' && 'good' || (inputs.status == 'failed' && 'danger' || 'warning') }}",
                 "fields": [
                   {
                     "title": "Status",
@@ -84,9 +74,10 @@ runs:
             "mrkdwn": true
           }
 
-    # Step 2: Reply in thread with status log (only if thread_ts provided or we just created a message)
-    - name: Reply status in thread
-      if: inputs.thread_ts != '' || steps.slack-notification.outputs.ts != ''
+    # If thread_ts is provided (PR flow): reply in thread only
+    - name: Reply CI status in thread
+      id: slack-reply
+      if: inputs.thread_ts != ''
       uses: slackapi/slack-github-action@v2.1.1
       with:
         method: chat.postMessage
@@ -94,9 +85,9 @@ runs:
         payload: |
           {
             "channel": "${{ inputs.channel_id }}",
-            "text": "Status: `${{ inputs.status }}` [<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}|Logs>]",
-            "thread_ts": "${{ inputs.thread_ts || steps.slack-notification.outputs.ts }}",
-            "reply_broadcast": ${{ inputs.reply_broadcast }},
+            "text": "Status: `${{ inputs.status }}` | Build #${{ github.run_number }} [<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Logs>]",
+            "thread_ts": "${{ inputs.thread_ts }}",
+            "reply_broadcast": false,
             "link_names": true,
             "mrkdwn": true
           }

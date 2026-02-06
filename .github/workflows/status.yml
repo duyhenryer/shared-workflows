@@ -19,8 +19,8 @@ on:
         default: ""
       slack_thread_ts:
         description: |
-          Slack thread timestamp for update and reply (from pr-checks output).
-          If provided, updates the original message and replies in thread.
+          Slack thread timestamp for reply (from pr-checks output).
+          If provided, replies in that thread. If empty, sends standalone message.
         type: string
         required: false
         default: ""
@@ -119,6 +119,5 @@ jobs:
         with:
           channel_id: ${{ steps.slack-channel.outputs.slack_channel_id }}
           status: ${{ needs.workflow-status.outputs.status }}
-          update_ts: ${{ inputs.slack_thread_ts }}
           thread_ts: ${{ inputs.slack_thread_ts }}
           slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}
