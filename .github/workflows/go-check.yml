@@ -39,31 +39,53 @@ on:
         type: string
         default: 10m
         description: Indicate the timeout of golangci-lint. Default is 10 minutes
+      test-stable:
+        required: false
+        type: boolean
+        default: false
+        description: Also test against stable Go version (non-blocking, for compatibility check)
 
 
 jobs:
   # Run test
   test:
-    name: Test
+    name: Test (${{ matrix.go-version }})
     timeout-minutes: 60
-
     runs-on: ${{ inputs.runs-on }}
+    
+    strategy:
+      matrix:
+        go-version: ${{ inputs.test-stable && fromJSON('["project", "stable"]') || fromJSON('["project"]') }}
+      fail-fast: false
+    
+    # Stable version failures are non-blocking (for early compatibility detection)
+    continue-on-error: ${{ matrix.go-version == 'stable' }}
+    
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup go
+      - name: Setup Go (project version)
         uses: actions/setup-go@v6
-        if: ${{ inputs.setup-go == true }}
+        if: ${{ inputs.setup-go == true && matrix.go-version == 'project' }}
         with:
           go-version-file: ${{ inputs.gomod-path }}
+
+      - name: Setup Go (stable)
+        uses: actions/setup-go@v6
+        if: ${{ inputs.setup-go == true && matrix.go-version == 'stable' }}
+        with:
+          go-version: 'stable'
+
+      - name: Show Go version
+        run: go version
 
       - name: "Unit Test"
         run: ${{ inputs.command-test }}
 
       - name: Archive code coverage results
         uses: actions/upload-artifact@v4
-        if: success()
+        if: success() && matrix.go-version == 'project'
         with:
           name: coverage-report
           path: coverage.out
