@@ -61,6 +61,7 @@ jobs:
       contents: read
       packages: write
       id-token: write  # For Cosign keyless signing
+      actions: read    # For provenance attestations
 
     outputs:
       image: ${{ steps.meta.outputs.tags }}
