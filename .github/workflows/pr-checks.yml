@@ -63,7 +63,6 @@ jobs:
       - name: Notify PR Event
         id: slack-notify
         uses: slackapi/slack-github-action@v2.1.1
-        continue-on-error: true
         with:
           method: chat.postMessage
           token: ${{ secrets.SLACK_BOT_TOKEN }}
