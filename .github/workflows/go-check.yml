@@ -39,6 +39,11 @@ on:
         type: string
         default: 10m
         description: Indicate the timeout of golangci-lint. Default is 10 minutes
+      lint-version:
+        required: false
+        type: string
+        default: "v2.6.0"
+        description: golangci-lint version (e.g. v2.6.0). Uses go install for act/Go version compatibility.
       test-stable:
         required: false
         type: boolean
@@ -111,11 +116,8 @@ jobs:
         run: |
           go mod download
 
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ inputs.lint-version }}
+
       - name: Lint check
-        uses: golangci/golangci-lint-action@v4
-        with:
-          # Use a recent golangci-lint build so it supports the project's Go version.
-          # golangci-lint only supports Go versions <= the Go version it was compiled with.
-          version: latest
-          args: --timeout=${{ inputs.lint-timeout }}
-            --config=${{ inputs.lint-path }}
+        run: golangci-lint run --timeout=${{ inputs.lint-timeout }} --config=${{ inputs.lint-path }}

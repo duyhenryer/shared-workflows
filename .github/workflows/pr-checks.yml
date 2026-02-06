@@ -12,6 +12,10 @@ on:
         description: |
           The slack bot token to authorize with slack.
         required: true
+      SLACK_CHANNEL_ID:
+        description: |
+          Slack channel ID to post PR notifications (e.g. C0AD82A9A74).
+        required: true
 
 jobs:
   validate-pr:
@@ -57,6 +61,6 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             {
-              "channel": "pull-request-${{ github.base_ref }}",
+              "channel": "${{ secrets.SLACK_CHANNEL_ID }}",
               "text": "PULL_REQUEST <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}> ${{ github.event.action }} in <${{ github.event.repository.html_url}}|${{ github.repository }}> by ${{ github.event.pull_request.user.login }} @${{ env.owners}}"
             }
