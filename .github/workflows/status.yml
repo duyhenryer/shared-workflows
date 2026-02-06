@@ -163,16 +163,9 @@ jobs:
         with:
           script: |
             const inputs = ${{ toJSON(inputs) }}
-            
-            var slack_channel_id = inputs.slack_channel_id
-            if (slack_channel_id == "") {
-              // Default channel ID - replace with your actual Slack channel ID
-              slack_channel_id = process.env.SLACK_CHANNEL_ID || ''
-            }
+            const slack_channel_id = inputs.slack_channel_id || ''
             console.log('Slack channel:', slack_channel_id);
             core.setOutput('slack_channel_id', slack_channel_id);
-        env:
-          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
 
 
       - name: Checkout shared-workflows (for composite action)

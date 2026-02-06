@@ -7,6 +7,11 @@ on:
         default: ubuntu-latest
         required: false
         type: string
+      slack_channel_id:
+        description: |
+          Slack channel ID to post PR notifications (e.g. C0AD82A9A74).
+        required: true
+        type: string
     outputs:
       slack_thread_ts:
         description: 'Slack thread timestamp for reply threading and message update'
@@ -15,10 +20,6 @@ on:
       SLACK_BOT_TOKEN:
         description: |
           The slack bot token to authorize with slack.
-        required: true
-      SLACK_CHANNEL_ID:
-        description: |
-          Slack channel ID to post PR notifications (e.g. C0AD82A9A74).
         required: true
 
 jobs:
@@ -68,6 +69,6 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             {
-              "channel": "${{ secrets.SLACK_CHANNEL_ID }}",
+              "channel": "${{ inputs.slack_channel_id }}",
               "text": "PULL_REQUEST <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}> ${{ github.event.action }} in <${{ github.event.repository.html_url}}|${{ github.repository }}> by ${{ github.event.pull_request.user.login }} @${{ env.owners}}"
             }
