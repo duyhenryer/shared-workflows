@@ -169,24 +169,22 @@ jobs:
           echo "| Triggered by | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Workflow | [View Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
 
-      # TODO: Add Slack notification when SLACK_BOT_TOKEN is configured
-      # - name: Send Slack notification
-      #   if: vars.SLACK_CHANNEL_ID != ''
-      #   uses: slackapi/slack-github-action@v1.25
-      #   with:
-      #     channel-id: ${{ vars.SLACK_CHANNEL_ID }}
-      #     payload: |
-      #       {
-      #         "text": "❌ Build failed: `${{ inputs.image-name }}`",
-      #         "attachments": [{
-      #           "color": "danger",
-      #           "fields": [
-      #             {"title": "Repository", "value": "`${{ github.repository }}`", "short": true},
-      #             {"title": "Branch", "value": "`${{ github.ref_name }}`", "short": true},
-      #             {"title": "Actor", "value": "${{ github.actor }}", "short": true},
-      #             {"title": "Logs", "value": "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Workflow>"}
-      #           ]
-      #         }]
-      #       }
-      #   env:
-      #     SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@v1.25
+        with:
+          channel-id: ${{ vars.SLACK_CHANNEL_ID }}
+          payload: |
+            {
+              "text": "❌ Build failed: `${{ inputs.image-name }}`",
+              "attachments": [{
+                "color": "danger",
+                "fields": [
+                  {"title": "Repository", "value": "`${{ github.repository }}`", "short": true},
+                  {"title": "Branch", "value": "`${{ github.ref_name }}`", "short": true},
+                  {"title": "Actor", "value": "${{ github.actor }}", "short": true},
+                  {"title": "Logs", "value": "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Workflow>"}
+                ]
+              }]
+            }
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
