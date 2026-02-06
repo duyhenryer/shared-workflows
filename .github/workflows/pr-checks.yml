@@ -11,7 +11,7 @@ on:
       SLACK_BOT_TOKEN:
         description: |
           The slack bot token to authorize with slack.
-        required: false
+        required: true
 
 jobs:
   validate-pr:
@@ -28,7 +28,6 @@ jobs:
         fi
 
   notify-pr-events:
-    if: ${{ secrets.SLACK_BOT_TOKEN != '' }}
     runs-on: ${{ inputs.runs-on }}
     steps:
       - name: Checkout CODEOWNERS file
