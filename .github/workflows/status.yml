@@ -24,10 +24,24 @@ on:
         type: string
         required: false
         default: ""
+      gsheet_spreadsheet_id:
+        description: |
+          Google Sheet spreadsheet ID for CI reporting.
+          If empty, Google Sheets reporting is skipped.
+          The spreadsheet must have two tabs: "workflow-status" and "jobs-status".
+        type: string
+        required: false
+        default: ""
     secrets:
       SLACK_BOT_TOKEN:
         description: "Slack bot token for notifications"
         required: true
+      GSHEET_CLIENT_EMAIL:
+        description: "Google service account email for Sheets API"
+        required: false
+      GSHEET_PRIVATE_KEY:
+        description: "Google service account private key for Sheets API"
+        required: false
 
 jobs:
   workflow-status:
@@ -35,12 +49,23 @@ jobs:
     if: ${{ always() }}
     outputs:
       status: ${{ steps.fetch-workflow-status.outputs.status }}
+      workflow_status_rows_json: ${{ steps.fetch-workflow-status.outputs.workflow_status_rows_json }}
+      jobs_status_rows_json: ${{ steps.fetch-workflow-status.outputs.jobs_status_rows_json }}
     steps:
       - uses: actions/github-script@v8
         id: fetch-workflow-status
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const now = new Date();
+
+            // Get workflow run details (for run_started_at)
+            const workflow = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId
+            });
+
             const jobs = await github.rest.actions.listJobsForWorkflowRun({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -80,6 +105,51 @@ jobs:
               // Log failure but do not fail the status job itself, so notification can proceed cleanly
               console.log("Workflow failed due to jobs: " + failedJobs.map(job => job.name).join(", "));
             }
+
+            // --- Google Sheets data collection ---
+            const workflowFullUrl = workflow.data.html_url + '/attempts/' + workflow.data.run_attempt;
+            const author = (workflow.data.head_commit && workflow.data.head_commit.author)
+              ? (workflow.data.head_commit.author.username || workflow.data.head_commit.author.name)
+              : context.actor;
+
+            // Workflow status row
+            const workflowStatusRows = [
+              [
+                workflow.data.run_started_at || '',
+                now.toISOString(),
+                workflowFullUrl,
+                context.repo.owner + '/' + context.repo.repo,
+                workflow.data.head_branch || '',
+                workflowStatus,
+                author,
+                context.eventName
+              ]
+            ];
+            core.setOutput("workflow_status_rows_json", JSON.stringify(workflowStatusRows));
+
+            // Jobs status rows (per-job durations)
+            var jobsStatusRows = [];
+            for (let i = 0; i < jobs.data.jobs.length; i++) {
+              var job = jobs.data.jobs[i];
+              // Skip the current status/notify jobs to avoid self-referencing
+              if (job.name.includes('Post deployment') || job.name.includes('workflow-status') || job.name.includes('notify')) continue;
+
+              var jobStatus = job.status === "completed" ? job.conclusion : job.status;
+              var jobDuration = 0;
+              if (job.completed_at && job.started_at) {
+                jobDuration = Math.round((new Date(job.completed_at) - new Date(job.started_at)) / 1000);
+              }
+
+              jobsStatusRows.push([
+                now.toISOString(),
+                workflowFullUrl,
+                context.repo.owner + '/' + context.repo.repo,
+                job.name,
+                jobDuration,
+                jobStatus
+              ]);
+            }
+            core.setOutput("jobs_status_rows_json", JSON.stringify(jobsStatusRows));
 
   notify:
     runs-on: ${{ inputs.runs-on }}
@@ -121,3 +191,44 @@ jobs:
           status: ${{ needs.workflow-status.outputs.status }}
           thread_ts: ${{ inputs.slack_thread_ts }}
           slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}
+
+      # --- Google Sheets Reporting ---
+      - name: Append workflow status to Google Sheet
+        if: ${{ always() && inputs.gsheet_spreadsheet_id != '' }}
+        uses: jroehl/gsheet.action@v2.1.1
+        with:
+          spreadsheetId: ${{ inputs.gsheet_spreadsheet_id }}
+          commands: |
+            [
+              {
+                "command": "appendData",
+                "args": {
+                  "worksheetTitle": "workflow-status",
+                  "minCol": 1,
+                  "data": ${{ needs.workflow-status.outputs.workflow_status_rows_json }}
+                }
+              }
+            ]
+        env:
+          GSHEET_CLIENT_EMAIL: ${{ secrets.GSHEET_CLIENT_EMAIL }}
+          GSHEET_PRIVATE_KEY: ${{ secrets.GSHEET_PRIVATE_KEY }}
+
+      - name: Append jobs status to Google Sheet
+        if: ${{ always() && inputs.gsheet_spreadsheet_id != '' }}
+        uses: jroehl/gsheet.action@v2.1.1
+        with:
+          spreadsheetId: ${{ inputs.gsheet_spreadsheet_id }}
+          commands: |
+            [
+              {
+                "command": "appendData",
+                "args": {
+                  "worksheetTitle": "jobs-status",
+                  "minCol": 1,
+                  "data": ${{ needs.workflow-status.outputs.jobs_status_rows_json }}
+                }
+              }
+            ]
+        env:
+          GSHEET_CLIENT_EMAIL: ${{ secrets.GSHEET_CLIENT_EMAIL }}
+          GSHEET_PRIVATE_KEY: ${{ secrets.GSHEET_PRIVATE_KEY }}
