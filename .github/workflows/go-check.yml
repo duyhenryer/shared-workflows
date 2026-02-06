@@ -114,6 +114,8 @@ jobs:
       - name: Lint check
         uses: golangci/golangci-lint-action@v4
         with:
-          version: v1.64.5
+          # Use a recent golangci-lint build so it supports the project's Go version.
+          # golangci-lint only supports Go versions <= the Go version it was compiled with.
+          version: latest
           args: --timeout=${{ inputs.lint-timeout }}
             --config=${{ inputs.lint-path }}
