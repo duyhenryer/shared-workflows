@@ -49,6 +49,7 @@ jobs:
       ## Notify the PR details to codeowners on slack
       - name: Notify PR Event
         uses: slackapi/slack-github-action@v2.1.0
+        continue-on-error: true
         with:
           channel-id: "pull-request-${{ github.base_ref }}"
           payload: |
