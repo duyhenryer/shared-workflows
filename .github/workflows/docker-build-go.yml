@@ -95,7 +95,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}
+          images: ghcr.io/${{ github.repository }}/${{ inputs.image-name }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -117,9 +117,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ inputs.build-args }}
           cache-from: |
-            type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}:cache-main
-            type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}:cache-${{ github.ref_name }}
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}:cache-${{ github.ref_name }},mode=max
+            type=registry,ref=ghcr.io/${{ github.repository }}/${{ inputs.image-name }}:cache-main
+            type=registry,ref=ghcr.io/${{ github.repository }}/${{ inputs.image-name }}:cache-${{ github.ref_name }}
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}/${{ inputs.image-name }}:cache-${{ github.ref_name }},mode=max
           provenance: true
           sbom: ${{ inputs.sbom }}
 
