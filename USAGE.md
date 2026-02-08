@@ -94,12 +94,13 @@ jobs:
 ## docker-build.yml
 
 **Purpose:** Docker build & push orchestrator (wrapper workflow)
-**Features:** Delegates to `docker-build-go.yml` (build) and `docker-sign.yml` (Cosign signing), with failure summary
+**Features:** Delegates to `docker-build-go.yml` (build), `trivy-scan.yml` (vulnerability scan), and `docker-sign.yml` (Cosign signing), with failure summary
 
 This is the **recommended entry point** for service repos. It chains:
 1. `docker-build-go.yml` -- build & push to GHCR
-2. `docker-sign.yml` -- Cosign keyless signing (when `push` and `cosign` are both enabled)
-3. Failure notification step summary
+2. `trivy-scan.yml` -- vulnerability scan (when `push` and `trivy` are both enabled)
+3. `docker-sign.yml` -- Cosign keyless signing (when `push` and `cosign` enabled, and scan passed)
+4. Failure notification step summary
 
 ### Inputs
 
@@ -115,6 +116,10 @@ This is the **recommended entry point** for service repos. It chains:
 | `runs-on` | string | `"ubuntu-latest"` | No | Runner type |
 | `cosign` | boolean | `true` | No | Sign image with Cosign (keyless OIDC) |
 | `sbom` | boolean | `false` | No | Generate SBOM attestation |
+| `trivy` | boolean | `true` | No | Enable Trivy vulnerability scan after build |
+| `trivy-severity` | string | `"CRITICAL,HIGH"` | No | Severity levels for Trivy scan |
+| `trivy-exit-code` | string | `"1"` | No | `0` = warn only, `1` = block sign on vulnerabilities |
+| `trivy-ignore-unfixed` | boolean | `true` | No | Ignore unfixed vulnerabilities |
 
 ### Usage
 
@@ -128,13 +133,18 @@ jobs:
       platforms: 'linux/amd64,linux/arm64'
       cosign: true
       sbom: true
+      trivy: true
+      trivy-severity: 'CRITICAL,HIGH'
     secrets: inherit
     permissions:
       contents: read
       packages: write
       actions: read
       id-token: write
+      security-events: write
 ```
+
+> When Trivy scan fails (vulnerabilities found matching severity filter), the sign phase is skipped and the image is **not** signed. Set `trivy-exit-code: '0'` to scan without blocking.
 
 ---
 
@@ -215,6 +225,85 @@ jobs:
       packages: write
       id-token: write
 ```
+
+---
+
+## trivy-scan.yml
+
+**Purpose:** Docker image vulnerability scanning
+**Features:** Trivy scanner, SARIF upload to GitHub Security tab, step summary, optional Google Sheets reporting, structured outputs
+
+> Typically called by `docker-build.yml` (wrapper) between build and sign phases. Can also be called standalone after any build workflow that produces an image in GHCR.
+
+### Inputs
+
+| Parameter | Type | Default | Required | Description |
+|-----------|------|---------|----------|-------------|
+| `image-ref` | string | - | **Yes** | Full image reference (e.g. `ghcr.io/org/app@sha256:...`) |
+| `severity` | string | `"CRITICAL,HIGH"` | No | Comma-separated severity levels to scan |
+| `exit-code` | string | `"1"` | No | `0` = warn only, `1` = fail on vulnerabilities |
+| `ignore-unfixed` | boolean | `true` | No | Skip vulnerabilities without available fix |
+| `scanners` | string | `"vuln"` | No | What to scan (`vuln`, `secret`, `misconfig`) |
+| `runs-on` | string | `"ubuntu-latest"` | No | Runner type |
+| `gsheet_spreadsheet_id` | string | `""` | No | Google Sheet ID for security scan reporting (tab: `security-scan`) |
+
+### Outputs
+
+| Output | Description |
+|--------|-------------|
+| `status` | `pass` or `fail` |
+| `critical` | Count of CRITICAL vulnerabilities |
+| `high` | Count of HIGH vulnerabilities |
+| `medium` | Count of MEDIUM vulnerabilities |
+| `low` | Count of LOW vulnerabilities |
+
+### Secrets
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `GSHEET_CLIENT_EMAIL` | No | Google service account email (for Sheets reporting) |
+| `GSHEET_PRIVATE_KEY` | No | Google service account private key (for Sheets reporting) |
+
+### Usage
+
+**Standalone (after a custom build):**
+```yaml
+jobs:
+  build:
+    # ... your build job that outputs tags and digest ...
+
+  scan:
+    needs: [build]
+    uses: duyhenryer/shared-workflows/.github/workflows/trivy-scan.yml@main
+    with:
+      image-ref: ghcr.io/${{ github.repository }}/my-app@${{ needs.build.outputs.digest }}
+      severity: 'CRITICAL,HIGH'
+      exit-code: '1'
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+```
+
+**With Google Sheets reporting:**
+```yaml
+jobs:
+  scan:
+    uses: duyhenryer/shared-workflows/.github/workflows/trivy-scan.yml@main
+    with:
+      image-ref: ghcr.io/${{ github.repository }}/my-app@sha256:abc123...
+      gsheet_spreadsheet_id: "1AbC...xYz"
+    secrets:
+      GSHEET_CLIENT_EMAIL: ${{ secrets.GSHEET_CLIENT_EMAIL }}
+      GSHEET_PRIVATE_KEY: ${{ secrets.GSHEET_PRIVATE_KEY }}
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+```
+
+> When using Google Sheets, create a tab named `security-scan` in your spreadsheet. Each scan appends a row with: Timestamp, Workflow URL, Repository, Image, Critical, High, Medium, Low, Status, Branch, Author.
 
 ---
 
@@ -440,7 +529,7 @@ jobs:
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
 ```
 
-### Docker Build Pipeline
+### Docker Build Pipeline (build -> scan -> sign)
 
 ```yaml
 name: Docker Build
@@ -459,12 +548,15 @@ jobs:
       platforms: 'linux/amd64,linux/arm64'
       cosign: true
       sbom: true
+      trivy: true
+      trivy-severity: 'CRITICAL,HIGH'
     secrets: inherit
     permissions:
       contents: read
       packages: write
       actions: read
       id-token: write
+      security-events: write
 
   notify:
     needs: [docker]
@@ -488,8 +580,8 @@ Set these in your repository settings (Settings → Secrets and variables → Ac
 |--------|---------|----------|-------------|
 | `SLACK_BOT_TOKEN` | pr-checks.yml, status.yml | **Yes** | Slack bot token for notifications |
 | `SONAR_TOKEN` | sonarqube.yml | **Yes** | SonarCloud authentication token |
-| `GSHEET_CLIENT_EMAIL` | status.yml | No | Google service account email |
-| `GSHEET_PRIVATE_KEY` | status.yml | No | Google service account private key |
+| `GSHEET_CLIENT_EMAIL` | status.yml, trivy-scan.yml | No | Google service account email |
+| `GSHEET_PRIVATE_KEY` | status.yml, trivy-scan.yml | No | Google service account private key |
 
 ### Repository Setup
 
@@ -562,6 +654,20 @@ with:
   fail-on-quality-gate: false
 ```
 
+### "Trivy scan blocking image signing"
+
+**Solution:** If you want to scan without blocking the sign phase, set exit-code to 0:
+```yaml
+with:
+  trivy-exit-code: '0'  # Warn only, don't block
+```
+
+Or to skip Trivy entirely:
+```yaml
+with:
+  trivy: false
+```
+
 ---
 
 ## Additional Resources
@@ -571,6 +677,7 @@ with:
 - [TFLint Documentation](https://github.com/terraform-linters/tflint)
 - [SonarCloud Documentation](https://docs.sonarsource.com/sonarcloud/)
 - [Cosign Documentation](https://docs.sigstore.dev/cosign/overview/)
+- [Trivy Documentation](https://trivy.dev/latest/docs/)
 - [Slack API](https://api.slack.com/)
 
 ---

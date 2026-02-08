@@ -1,0 +1,223 @@
+name: Trivy Image Scan
+
+# Reusable workflow: scans a Docker image for vulnerabilities using Trivy.
+# Reports results to: GitHub Security tab (SARIF), Step Summary, optional Google Sheets.
+# Designed to run after docker-build-go.yml; can also be called standalone.
+
+on:
+  workflow_call:
+    inputs:
+      image-ref:
+        description: 'Full image reference to scan (e.g. ghcr.io/org/app@sha256:...)'
+        required: true
+        type: string
+      severity:
+        description: 'Comma-separated severity levels to scan for'
+        required: false
+        type: string
+        default: 'CRITICAL,HIGH'
+      exit-code:
+        description: 'Exit code when vulnerabilities found (0 = warn only, 1 = fail)'
+        required: false
+        type: string
+        default: '1'
+      ignore-unfixed:
+        description: 'Ignore unpatched/unfixed vulnerabilities'
+        required: false
+        type: boolean
+        default: true
+      scanners:
+        description: 'What to scan for (vuln, secret, misconfig)'
+        required: false
+        type: string
+        default: 'vuln'
+      runs-on:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      gsheet_spreadsheet_id:
+        description: |
+          Google Sheet spreadsheet ID for security scan reporting.
+          If empty, Google Sheets reporting is skipped.
+          The spreadsheet must have a tab named "security-scan".
+        required: false
+        type: string
+        default: ''
+    outputs:
+      status:
+        description: 'Scan result: pass or fail'
+        value: ${{ jobs.scan.outputs.status }}
+      critical:
+        description: 'Count of CRITICAL vulnerabilities'
+        value: ${{ jobs.scan.outputs.critical }}
+      high:
+        description: 'Count of HIGH vulnerabilities'
+        value: ${{ jobs.scan.outputs.high }}
+      medium:
+        description: 'Count of MEDIUM vulnerabilities'
+        value: ${{ jobs.scan.outputs.medium }}
+      low:
+        description: 'Count of LOW vulnerabilities'
+        value: ${{ jobs.scan.outputs.low }}
+    secrets:
+      GSHEET_CLIENT_EMAIL:
+        description: 'Google service account email for Sheets API'
+        required: false
+      GSHEET_PRIVATE_KEY:
+        description: 'Google service account private key for Sheets API'
+        required: false
+
+jobs:
+  scan:
+    name: Trivy Scan
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+
+    outputs:
+      status: ${{ steps.parse.outputs.status }}
+      critical: ${{ steps.parse.outputs.critical }}
+      high: ${{ steps.parse.outputs.high }}
+      medium: ${{ steps.parse.outputs.medium }}
+      low: ${{ steps.parse.outputs.low }}
+
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 1: Scan with JSON output (always succeed so we can parse results)
+      - name: Trivy scan (JSON)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ inputs.image-ref }}
+          format: 'json'
+          output: 'trivy-results.json'
+          severity: ${{ inputs.severity }}
+          exit-code: '0'
+          ignore-unfixed: ${{ inputs.ignore-unfixed }}
+          scanners: ${{ inputs.scanners }}
+
+      # Step 2: Parse vulnerability counts from JSON
+      - name: Parse vulnerability counts
+        id: parse
+        run: |
+          # Extract counts per severity from Trivy JSON output
+          CRITICAL=$(jq '[.Results[]? | .Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-results.json 2>/dev/null || echo 0)
+          HIGH=$(jq '[.Results[]? | .Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-results.json 2>/dev/null || echo 0)
+          MEDIUM=$(jq '[.Results[]? | .Vulnerabilities[]? | select(.Severity == "MEDIUM")] | length' trivy-results.json 2>/dev/null || echo 0)
+          LOW=$(jq '[.Results[]? | .Vulnerabilities[]? | select(.Severity == "LOW")] | length' trivy-results.json 2>/dev/null || echo 0)
+
+          echo "critical=${CRITICAL}" >> $GITHUB_OUTPUT
+          echo "high=${HIGH}" >> $GITHUB_OUTPUT
+          echo "medium=${MEDIUM}" >> $GITHUB_OUTPUT
+          echo "low=${LOW}" >> $GITHUB_OUTPUT
+
+          # Determine pass/fail based on exit-code setting and severity filter
+          TOTAL_FILTERED=0
+          IFS=',' read -ra SEV_ARRAY <<< "${{ inputs.severity }}"
+          for sev in "${SEV_ARRAY[@]}"; do
+            sev=$(echo "$sev" | xargs)  # trim whitespace
+            case "$sev" in
+              CRITICAL) TOTAL_FILTERED=$((TOTAL_FILTERED + CRITICAL)) ;;
+              HIGH)     TOTAL_FILTERED=$((TOTAL_FILTERED + HIGH)) ;;
+              MEDIUM)   TOTAL_FILTERED=$((TOTAL_FILTERED + MEDIUM)) ;;
+              LOW)      TOTAL_FILTERED=$((TOTAL_FILTERED + LOW)) ;;
+            esac
+          done
+
+          if [ "${{ inputs.exit-code }}" = "1" ] && [ "$TOTAL_FILTERED" -gt 0 ]; then
+            echo "status=fail" >> $GITHUB_OUTPUT
+          else
+            echo "status=pass" >> $GITHUB_OUTPUT
+          fi
+
+          echo "### Trivy Scan Counts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| CRITICAL | ${CRITICAL} |" >> $GITHUB_STEP_SUMMARY
+          echo "| HIGH | ${HIGH} |" >> $GITHUB_STEP_SUMMARY
+          echo "| MEDIUM | ${MEDIUM} |" >> $GITHUB_STEP_SUMMARY
+          echo "| LOW | ${LOW} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`${{ inputs.image-ref }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity Filter | \`${{ inputs.severity }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ignore Unfixed | \`${{ inputs.ignore-unfixed }}\` |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ inputs.exit-code }}" = "1" ] && [ "$TOTAL_FILTERED" -gt 0 ]; then
+            echo "| Status | **FAIL** (${TOTAL_FILTERED} vulnerabilities found) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Status | **PASS** |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      # Step 3: Scan with SARIF output for GitHub Security tab
+      - name: Trivy scan (SARIF)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ inputs.image-ref }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: ${{ inputs.severity }}
+          exit-code: '0'
+          ignore-unfixed: ${{ inputs.ignore-unfixed }}
+          scanners: ${{ inputs.scanners }}
+          skip-setup-trivy: true
+
+      # Step 4: Upload SARIF to GitHub Security tab
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      # Step 5: Google Sheets reporting (optional)
+      - name: Append security scan to Google Sheet
+        if: ${{ always() && inputs.gsheet_spreadsheet_id != '' }}
+        uses: jroehl/gsheet.action@v2.1.1
+        with:
+          spreadsheetId: ${{ inputs.gsheet_spreadsheet_id }}
+          commands: |
+            [
+              {
+                "command": "appendData",
+                "args": {
+                  "worksheetTitle": "security-scan",
+                  "minCol": 1,
+                  "data": [
+                    [
+                      "${{ github.event.repository.updated_at || '' }}",
+                      "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+                      "${{ github.repository }}",
+                      "${{ inputs.image-ref }}",
+                      "${{ steps.parse.outputs.critical }}",
+                      "${{ steps.parse.outputs.high }}",
+                      "${{ steps.parse.outputs.medium }}",
+                      "${{ steps.parse.outputs.low }}",
+                      "${{ steps.parse.outputs.status }}",
+                      "${{ github.ref_name }}",
+                      "${{ github.actor }}"
+                    ]
+                  ]
+                }
+              }
+            ]
+        env:
+          GSHEET_CLIENT_EMAIL: ${{ secrets.GSHEET_CLIENT_EMAIL }}
+          GSHEET_PRIVATE_KEY: ${{ secrets.GSHEET_PRIVATE_KEY }}
+
+      # Step 6: Fail the job if vulnerabilities exceed threshold
+      - name: Evaluate scan result
+        if: steps.parse.outputs.status == 'fail'
+        run: |
+          echo "::error::Trivy scan failed: vulnerabilities found matching severity filter (${{ inputs.severity }})"
+          echo "CRITICAL=${{ steps.parse.outputs.critical }}, HIGH=${{ steps.parse.outputs.high }}, MEDIUM=${{ steps.parse.outputs.medium }}, LOW=${{ steps.parse.outputs.low }}"
+          exit 1

@@ -1,8 +1,9 @@
 name: Docker Build & Push
 
-# Wrapper workflow: orchestrates build → sign → failure summary.
+# Wrapper workflow: orchestrates build → scan → sign → failure summary.
 # Service repos call this workflow; it delegates to:
 #   - docker-build-go.yml  (build & push)
+#   - trivy-scan.yml       (vulnerability scanning)
 #   - docker-sign.yml      (Cosign keyless signing)
 #
 # All original inputs are preserved for backward compatibility.
@@ -59,6 +60,26 @@ on:
         required: false
         type: boolean
         default: false
+      trivy:
+        description: 'Enable Trivy vulnerability scan after build'
+        required: false
+        type: boolean
+        default: true
+      trivy-severity:
+        description: 'Trivy severity levels to scan for (e.g. CRITICAL,HIGH)'
+        required: false
+        type: string
+        default: 'CRITICAL,HIGH'
+      trivy-exit-code:
+        description: 'Trivy exit code on vulnerabilities (0 = warn, 1 = block sign)'
+        required: false
+        type: string
+        default: '1'
+      trivy-ignore-unfixed:
+        description: 'Ignore unfixed vulnerabilities in Trivy scan'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   # Phase 1: Build & Push
@@ -80,10 +101,30 @@ jobs:
       packages: write
       actions: read
 
-  # Phase 2: Cosign Signing (only when pushing and cosign enabled)
-  sign:
+  # Phase 2: Vulnerability Scan (only when pushing and trivy enabled)
+  scan:
     needs: [build]
-    if: inputs.push && inputs.cosign
+    if: inputs.push && inputs.trivy
+    uses: ./.github/workflows/trivy-scan.yml
+    with:
+      image-ref: ghcr.io/${{ github.repository }}/${{ inputs.image-name }}@${{ needs.build.outputs.digest }}
+      severity: ${{ inputs.trivy-severity }}
+      exit-code: ${{ inputs.trivy-exit-code }}
+      ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
+      runs-on: ${{ inputs.runs-on }}
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+
+  # Phase 3: Cosign Signing (only when pushing, cosign enabled, and scan passed or skipped)
+  sign:
+    needs: [build, scan]
+    if: |
+      always() &&
+      inputs.push && inputs.cosign &&
+      (needs.scan.result == 'success' || needs.scan.result == 'skipped')
     uses: ./.github/workflows/docker-sign.yml
     with:
       tags: ${{ needs.build.outputs.tags }}
@@ -95,12 +136,12 @@ jobs:
       packages: write
       id-token: write
 
-  # Phase 3: Failure Notification
+  # Phase 4: Failure Notification
   failure-notification:
     name: Failure Notification
     runs-on: ubuntu-latest
     if: failure()
-    needs: [build, sign]
+    needs: [build, scan, sign]
     permissions:
       contents: read
 
