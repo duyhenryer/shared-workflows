@@ -89,7 +89,7 @@ jobs:
         run: ${{ inputs.command-test }}
 
       - name: Archive code coverage results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: success() && matrix.go-version == 'project'
         with:
           name: coverage-report
