@@ -27,13 +27,14 @@ jobs:
 |----------|---------|----------|
 | **[pr-checks.yml](.github/workflows/pr-checks.yml)** | PR handling | Branch validation, CODEOWNERS, Slack notifications |
 | **[go-check.yml](.github/workflows/go-check.yml)** | Go code quality | Tests, linting, coverage artifacts |
-| **[docker-build.yml](.github/workflows/docker-build.yml)** | Docker build & push | Orchestrates build → scan → sign, GHCR, SBOM |
-| **[docker-build-go.yml](.github/workflows/docker-build-go.yml)** | Docker build (Go) | Multi-platform, caching, provenance |
-| **[docker-sign.yml](.github/workflows/docker-sign.yml)** | Cosign image signing | Keyless OIDC signing |
+| **[docker-build-go.yml](.github/workflows/docker-build-go.yml)** | Docker build (Go) | Multi-platform, caching, provenance, outputs `tags` + `digest` |
 | **[trivy-scan.yml](.github/workflows/trivy-scan.yml)** | Image vulnerability scan | Trivy, SARIF, Google Sheets reporting |
+| **[docker-sign.yml](.github/workflows/docker-sign.yml)** | Cosign image signing | Keyless OIDC signing |
 | **[sonarqube.yml](.github/workflows/sonarqube.yml)** | SonarCloud analysis | Go coverage, Quality Gate |
 | **[tf-lint.yml](.github/workflows/tf-lint.yml)** | Terraform validation | Format check, TFLint analysis |
 | **[status.yml](.github/workflows/status.yml)** | Build notifications | Slack, Google Sheets, job summaries |
+
+> **Pipeline pattern:** Service repos chain workflows explicitly: `docker-build-go.yml` → `trivy-scan.yml` → `docker-sign.yml`. Each builder (Go, Node, Python...) outputs `tags` + `digest` consumed by the shared scan and sign workflows.
 
 ---
 
@@ -52,6 +53,47 @@ jobs:
       command-test: 'go test ./...'
       lint: true
     secrets: inherit
+```
+
+**Docker Build -> Scan -> Sign Pipeline:**
+```yaml
+jobs:
+  build:
+    uses: duyhenryer/shared-workflows/.github/workflows/docker-build-go.yml@main
+    with:
+      image-name: my-service
+      push: true
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+
+  scan:
+    needs: [build]
+    uses: duyhenryer/shared-workflows/.github/workflows/trivy-scan.yml@main
+    with:
+      image-ref: ghcr.io/${{ github.repository }}/my-service@${{ needs.build.outputs.digest }}
+      severity: 'CRITICAL,HIGH'
+      exit-code: '1'
+      ignore-unfixed: true
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+
+  sign:
+    needs: [build, scan]
+    uses: duyhenryer/shared-workflows/.github/workflows/docker-sign.yml@main
+    with:
+      tags: ${{ needs.build.outputs.tags }}
+      digest: ${{ needs.build.outputs.digest }}
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
 ```
 
 **Terraform Project:**
