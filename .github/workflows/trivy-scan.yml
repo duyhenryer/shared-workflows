@@ -159,6 +159,21 @@ jobs:
             echo "| Status | **PASS** |" >> $GITHUB_STEP_SUMMARY
           fi
 
+          # Vulnerability details (collapsible)
+          VULN_LIST=$(jq -r '.Results[]? | .Vulnerabilities[]? | "| \(.VulnerabilityID) | \(.Severity) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion // "N/A") |"' trivy-results.json 2>/dev/null || true)
+          if [ -n "$VULN_LIST" ]; then
+            {
+              echo ""
+              echo "<details><summary>Vulnerability Details</summary>"
+              echo ""
+              echo "| CVE | Severity | Package | Installed | Fixed |"
+              echo "|-----|----------|---------|-----------|-------|"
+              echo "$VULN_LIST"
+              echo ""
+              echo "</details>"
+            } >> $GITHUB_STEP_SUMMARY
+          fi
+
       # Step 3: Scan with SARIF output for GitHub Security tab
       - name: Trivy scan (SARIF)
         uses: aquasecurity/trivy-action@0.33.1
