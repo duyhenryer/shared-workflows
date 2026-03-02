@@ -52,8 +52,11 @@ jobs:
         id: codeowners
         run: |
           if [ -f CODEOWNERS ]; then
-            # Extract first global owner from CODEOWNERS (e.g. "* @org" or "* @user")
-            owners="$(awk '$1=="*" {print $2; exit}' CODEOWNERS | sed 's/^@//')"
+            # Extract all global owners (e.g. "* @user1 @user2 @org/team")
+            owners="$(awk '$1=="*" {$1=""; print; exit}' CODEOWNERS \
+              | tr -s ' ' \
+              | sed 's/^ //' \
+              | sed 's/@//g')"
             echo "owners=${owners}" >> $GITHUB_ENV
           else
             echo "owners=" >> $GITHUB_ENV
