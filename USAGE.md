@@ -10,6 +10,8 @@ Detailed documentation for all available workflows with inputs, outputs, and exa
 **Trigger:** PR events only
 **Features:** Branch validation (gitflow prefixes), CODEOWNERS tagging, Slack event notifications
 
+> Requires a valid CODEOWNERS file in the caller repo for owner mentions in Slack. See [CODEOWNERS](#codeowners) for format and placement.
+
 ### Inputs
 
 | Parameter | Type | Default | Required | Description |
@@ -635,25 +637,66 @@ Set these in your repository settings (Settings → Secrets and variables → Ac
 
 ### Repository Setup
 
-1. **Create `.github/CODEOWNERS` file:**
-```gitignore
-# Global owners
-* @duyhenryer @team-lead
-
-# Language-specific
-*.go @team-backend
-*.tf @team-infra
-
-# Directory-specific
-/cmd @team-backend
-/terraform @team-infra
-```
-
+1. **Create a CODEOWNERS file** (see [CODEOWNERS](#codeowners) section below)
 2. **Configure Slack channels** (optional):
    - `#ci-alert` - General CI notifications
    - `#pull-request-main` - PR notifications for main branch
    - `#pull-request-dev` - PR notifications for dev branch
    - `#dev-notifications` - Development updates
+
+---
+
+## CODEOWNERS
+
+### How `pr-checks.yml` uses CODEOWNERS
+
+The `pr-checks.yml` workflow automatically extracts global code owners from the caller repo's CODEOWNERS file and tags them in the Slack PR notification (e.g. `cc @duyhenryer @duynebot`).
+
+**Discovery order** (matches [GitHub's precedence](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners#codeowners-file-location)):
+
+1. `.github/CODEOWNERS`
+2. `CODEOWNERS` (repo root)
+3. `docs/CODEOWNERS`
+
+The workflow sparse-checks out all three paths and uses the first file found. It then reads the **global owners line** (the line starting with `*`) and extracts all `@user` / `@org/team` mentions.
+
+If no CODEOWNERS file exists or no `*` line is found, the Slack message is still sent -- just without owner mentions.
+
+### File format (GitHub spec)
+
+Each line is a **file pattern** followed by one or more **owners** (`@username` or `@org/team-name`). Owners must have write access to the repo.
+
+```gitignore
+# Global owners -- requested for review on every PR
+* @duyhenryer @duynebot
+
+# Team-based ownership
+*.go        @duynhne/backend-team
+*.ts *.tsx  @duynhne/frontend-team
+*.tf        @duynhne/infra-team
+
+# Directory-specific
+/cmd/       @duynhne/backend-team
+/terraform/ @duynhne/infra-team
+/docs/      @duyhenryer
+
+# Protect the CODEOWNERS file itself
+/.github/CODEOWNERS @duyhenryer
+```
+
+### Key rules
+
+- The `*` (wildcard) line defines **default owners** for all files -- this is the line `pr-checks.yml` reads for Slack mentions
+- Order matters: the **last matching pattern** wins for GitHub's review request
+- Teams use the format `@org/team-name` and must have explicit write access
+- Inline comments start with `#`
+- One pattern per line; multiple owners on the same line
+
+### Where to place it
+
+Recommended: `.github/CODEOWNERS` -- keeps repo root clean and follows GitHub's highest-priority lookup path.
+
+> For full syntax details, see [GitHub docs: About code owners](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners).
 
 ---
 
@@ -674,9 +717,9 @@ Set these in your repository settings (Settings → Secrets and variables → Ac
 - `release/v1.2.3`
 - `fix-something` (not allowed -- use `fix/something` instead)
 
-### "CODEOWNERS not found"
+### "CODEOWNERS not found" or Slack shows no owners
 
-**Solution:** Create `.github/CODEOWNERS` file in your repository root.
+**Solution:** Create a CODEOWNERS file with a global owners line (`* @user1 @user2`). The workflow checks `.github/CODEOWNERS`, then `CODEOWNERS` (root), then `docs/CODEOWNERS`. See [CODEOWNERS](#codeowners) for details.
 
 ### "Lint timeout exceeded"
 
