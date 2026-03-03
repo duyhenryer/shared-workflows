@@ -45,21 +45,26 @@ jobs:
         uses: actions/checkout@v6
         with:
           sparse-checkout: |
+            .github/CODEOWNERS
             CODEOWNERS
+            docs/CODEOWNERS
 
-      ## Get the list of codeowners
       - name: Get CODEOWNERS
         id: codeowners
         run: |
-          if [ -f CODEOWNERS ]; then
-            # Extract all global owners (e.g. "* @user1 @user2 @org/team")
-            owners="$(awk '$1=="*" {$1=""; print; exit}' CODEOWNERS \
-              | tr -s ' ' \
-              | sed 's/^ //' \
-              | sed 's/@//g')"
-            echo "owners=${owners}" >> $GITHUB_ENV
+          # GitHub precedence: .github/ → root → docs/
+          for f in .github/CODEOWNERS CODEOWNERS docs/CODEOWNERS; do
+            if [ -f "$f" ]; then
+              CODEOWNERS_FILE="$f"
+              break
+            fi
+          done
+
+          if [ -n "${CODEOWNERS_FILE:-}" ]; then
+            owners="$(awk '$1=="*" { for(i=2;i<=NF;i++){if($i~/^#/)break; printf "%s ",$i}; exit }' "$CODEOWNERS_FILE" | sed 's/ $//')"
+            echo "owners=${owners}" >> "$GITHUB_ENV"
           else
-            echo "owners=" >> $GITHUB_ENV
+            echo "owners=" >> "$GITHUB_ENV"
           fi
 
       ## Notify the PR details to codeowners on slack
@@ -72,5 +77,5 @@ jobs:
           payload: |
             {
               "channel": "${{ inputs.slack_channel_id }}",
-              "text": "PULL_REQUEST <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}> ${{ github.event.action }} in <${{ github.event.repository.html_url}}|${{ github.repository }}> by ${{ github.event.pull_request.user.login }} @${{ env.owners}}"
+              "text": "PULL_REQUEST <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}> ${{ github.event.action }} in <${{ github.event.repository.html_url}}|${{ github.repository }}> by ${{ github.event.pull_request.user.login }}${{ env.owners != '' && format(' cc {0}', env.owners) || '' }}"
             }
