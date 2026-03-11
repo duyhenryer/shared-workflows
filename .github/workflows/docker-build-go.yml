@@ -3,6 +3,10 @@ name: Docker Build & Push (Go)
 # Reusable workflow: builds a Go service Docker image and pushes to GHCR.
 # Designed for Go microservices; create docker-build-node.yml etc. for other stacks.
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_call:
     inputs:
