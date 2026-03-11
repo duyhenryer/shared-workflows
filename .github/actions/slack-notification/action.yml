@@ -1,8 +1,9 @@
-name: Slack CI Notification
+name: Slack Notification
 description: |
-  Send CI status notification with thread support.
+  Send CI/CD status notification with thread support.
   - If thread_ts provided: reply in that thread (PR flow)
   - If thread_ts empty: send standalone message (push to main flow)
+  - If update_ts provided: update existing message instead of sending new one
 
 inputs:
   channel_id:
@@ -15,6 +16,14 @@ inputs:
     required: false
     description: 'Slack thread timestamp to reply to (from pr-checks output). If empty, sends standalone message.'
     default: ''
+  update_ts:
+    required: false
+    description: 'Slack message timestamp to update. If empty, sends new message.'
+    default: ''
+  reply_broadcast:
+    required: false
+    description: 'Whether reply should be broadcast to the channel.'
+    default: 'false'
   slack_bot_token:
     required: true
     description: 'Slack bot token for authentication'
@@ -23,6 +32,9 @@ outputs:
   ts:
     description: 'Timestamp of sent message'
     value: ${{ steps.slack-standalone.outputs.ts || steps.slack-reply.outputs.ts }}
+  thread_ts:
+    description: 'Thread timestamp for chaining replies'
+    value: ${{ steps.slack-standalone.outputs.thread_ts || steps.slack-reply.outputs.thread_ts }}
 
 runs:
   using: composite
@@ -33,11 +45,12 @@ runs:
       if: inputs.thread_ts == ''
       uses: slackapi/slack-github-action@v2.1.1
       with:
-        method: chat.postMessage
+        method: chat.${{ inputs.update_ts && 'update' || 'postMessage' }}
         token: ${{ inputs.slack_bot_token }}
         payload: |
           {
             "channel": "${{ inputs.channel_id }}",
+            ${{ inputs.update_ts && format('"ts": "{0}",', inputs.update_ts) || '' }}
             "text": "CI for `${{ github.repository }}` - ${{ inputs.status }}",
             "attachments": [
               {
@@ -64,6 +77,11 @@ runs:
                     "value": "#${{ github.run_number }}"
                   },
                   {
+                    "title": "Commit",
+                    "short": true,
+                    "value": "<${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|`${{ github.sha }}`>"
+                  },
+                  {
                     "title": "Workflow",
                     "value": "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Logs>"
                   }
@@ -74,7 +92,7 @@ runs:
             "mrkdwn": true
           }
 
-    # If thread_ts is provided (PR flow): reply in thread only
+    # If thread_ts is provided (PR flow): reply in thread
     - name: Reply CI status in thread
       id: slack-reply
       if: inputs.thread_ts != ''
@@ -87,7 +105,7 @@ runs:
             "channel": "${{ inputs.channel_id }}",
             "text": "Status: `${{ inputs.status }}` | Build #${{ github.run_number }} [<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Logs>]",
             "thread_ts": "${{ inputs.thread_ts }}",
-            "reply_broadcast": false,
+            "reply_broadcast": ${{ inputs.reply_broadcast }},
             "link_names": true,
             "mrkdwn": true
           }
