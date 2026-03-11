@@ -22,7 +22,7 @@ inputs:
   pr_labels:
     description: 'Comma separated list of labels for the Pull Request'
     required: false
-    default: 'auto-sync, backport'
+    default: 'auto-sync,backport'
   auto_merge:
     description: 'Enable auto-merge for the Pull Request (true/false)'
     required: false
@@ -60,7 +60,8 @@ runs:
         TARGET_BRANCH="${{ inputs.target_branch }}"
         PR_TITLE="${{ inputs.pr_title }} (${SOURCE_BRANCH} -> ${TARGET_BRANCH})"
         PR_BODY="${{ inputs.pr_body }}"
-        PR_LABELS="${{ inputs.pr_labels }}"
+        # Remove any spaces that user might have accidentally input in the comma separated list
+        PR_LABELS="$(echo "${{ inputs.pr_labels }}" | tr -d ' ')"
         
         echo "========================================="
         echo "Syncing $SOURCE_BRANCH to $TARGET_BRANCH"
