@@ -44,6 +44,9 @@ on:
 jobs:
   sync-main-to-dev:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
