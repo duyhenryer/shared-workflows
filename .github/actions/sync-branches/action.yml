@@ -67,6 +67,9 @@ runs:
         echo "Syncing $SOURCE_BRANCH to $TARGET_BRANCH"
         echo "========================================="
 
+        # Authenticate git remote with the provided token
+        git remote set-url origin "https://x-access-token:${{ inputs.github_token }}@github.com/${{ github.repository }}.git"
+
         # Fetch the latest history for both branches
         git fetch origin $SOURCE_BRANCH
         git fetch origin $TARGET_BRANCH
