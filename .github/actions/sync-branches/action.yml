@@ -114,5 +114,5 @@ runs:
         if [ "${{ inputs.auto_merge }}" = "true" ] && [ -n "$PR_URL" ]; then
           echo "Enabling auto-merge for $PR_URL with method ${{ inputs.merge_method }}..."
           # Using --auto so it waits for passing status checks if any are required
-          gh pr merge "$PR_URL" --auto --${{ inputs.merge_method }} || echo "⚠️ Auto-merge could not be enabled immediately (maybe no checks are required, or lack of permissions). You may need to review it manually."
+          gh pr merge "$PR_URL" --auto --${{ inputs.merge_method }} || echo "Auto-merge could not be enabled immediately (maybe no checks are required, or lack of permissions). You may need to review it manually."
         fi
