@@ -1,0 +1,80 @@
+name: Gitleaks Secret Scan
+
+# Reusable workflow: scans source code and git history for leaked secrets.
+# Uses gitleaks CLI binary (MIT, open-source) via a composite action.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      config-path:
+        description: 'Path to custom .gitleaks.toml config'
+        required: false
+        type: string
+        default: ''
+      gitleaks-version:
+        description: 'Gitleaks CLI version to use'
+        required: false
+        type: string
+        default: '8.21.2'
+      scan-mode:
+        description: 'Scan mode: "auto" (PR=diff, push=full), "full", or "diff"'
+        required: false
+        type: string
+        default: 'auto'
+    outputs:
+      exit-code:
+        description: 'Gitleaks exit code (0=clean, 1=leaks)'
+        value: ${{ jobs.gitleaks.outputs.exit-code }}
+      sarif:
+        description: 'Path to SARIF report'
+        value: ${{ jobs.gitleaks.outputs.sarif }}
+      summary:
+        description: 'Number of findings'
+        value: ${{ jobs.gitleaks.outputs.summary }}
+
+jobs:
+  gitleaks:
+    name: Gitleaks Scan
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
+      security-events: write
+
+    outputs:
+      exit-code: ${{ steps.gitleaks.outputs.exit-code }}
+      sarif: ${{ steps.gitleaks.outputs.sarif }}
+      summary: ${{ steps.gitleaks.outputs.summary }}
+
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Checkout shared-workflows (for composite action)
+        uses: actions/checkout@v6
+        with:
+          repository: duyhenryer/shared-workflows
+          path: .shared-workflows
+          sparse-checkout: |
+            .github/actions/gitleaks
+
+      - name: Run Gitleaks
+        id: gitleaks
+        uses: ./.shared-workflows/.github/actions/gitleaks
+        with:
+          version: ${{ inputs.gitleaks-version }}
+          config-path: ${{ inputs.config-path }}
+          scan-mode: ${{ inputs.scan-mode }}
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ steps.gitleaks.outputs.sarif }}
+        continue-on-error: true

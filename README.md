@@ -27,6 +27,7 @@ jobs:
 |----------|---------|----------|
 | **[pr-checks.yml](.github/workflows/pr-checks.yml)** | PR handling | Branch validation, CODEOWNERS, Slack notifications |
 | **[go-check.yml](.github/workflows/go-check.yml)** | Go code quality | Tests, linting, coverage artifacts |
+| **[gitleaks.yml](.github/workflows/gitleaks.yml)** | Secret scanning (source) | Gitleaks CLI, PR diff / full scan, SARIF, job summary |
 | **[docker-build-go.yml](.github/workflows/docker-build-go.yml)** | Docker build (Go) | Multi-platform, caching, provenance, outputs `tags` + `digest` |
 | **[trivy-scan.yml](.github/workflows/trivy-scan.yml)** | Image vulnerability scan | Trivy, SARIF, Google Sheets reporting |
 | **[docker-sign.yml](.github/workflows/docker-sign.yml)** | Cosign image signing | Keyless OIDC signing |
@@ -53,6 +54,19 @@ jobs:
       command-test: 'go test ./...'
       lint: true
     secrets: inherit
+```
+
+**Secret Scanning (PR block, push warn):**
+```yaml
+jobs:
+  gitleaks:
+    uses: duyhenryer/shared-workflows/.github/workflows/gitleaks.yml@main
+    continue-on-error: ${{ github.event_name != 'pull_request' }}
+    with:
+      config-path: '.gitleaks.toml'  # optional
+    permissions:
+      contents: read
+      security-events: write
 ```
 
 **Docker Build -> Scan -> Sign Pipeline:**
