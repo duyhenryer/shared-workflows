@@ -107,10 +107,17 @@ runs:
         echo "exit-code=${SCAN_EXIT}" >> "$GITHUB_OUTPUT"
         echo "sarif=${SARIF_PATH}" >> "$GITHUB_OUTPUT"
 
-        # Count findings from SARIF
+        # Count findings from SARIF (gracefully degrade when jq is unavailable)
         FINDINGS=0
-        if [ -f "${SARIF_PATH}" ]; then
+        HAS_JQ=false
+        if command -v jq >/dev/null 2>&1; then
+          HAS_JQ=true
+        fi
+
+        if [ -f "${SARIF_PATH}" ] && [ "${HAS_JQ}" = "true" ]; then
           FINDINGS=$(jq '[.runs[]?.results[]?] | length' "${SARIF_PATH}" 2>/dev/null || echo 0)
+        elif [ -f "${SARIF_PATH}" ]; then
+          FINDINGS=$(grep -c '"ruleId"' "${SARIF_PATH}" 2>/dev/null || echo 0)
         fi
         echo "summary=${FINDINGS}" >> "$GITHUB_OUTPUT"
 
@@ -131,14 +138,14 @@ runs:
           fi
         } >> "$GITHUB_STEP_SUMMARY"
 
-        if [ "${FINDINGS}" -gt 0 ] && [ -f "${SARIF_PATH}" ]; then
+        if [ "${FINDINGS}" -gt 0 ] && [ -f "${SARIF_PATH}" ] && [ "${HAS_JQ}" = "true" ]; then
           {
             echo ""
             echo "<details><summary>Leak Details</summary>"
             echo ""
-            echo "| Rule | File | Line | Secret |"
-            echo "|------|------|------|--------|"
-            jq -r '.runs[]?.results[]? | "| \(.ruleId) | \(.locations[0]?.physicalLocation?.artifactLocation?.uri // "N/A") | \(.locations[0]?.physicalLocation?.region?.startLine // "N/A") | ((.message?.text // "N/A") | .[0:60]) |"' "${SARIF_PATH}" 2>/dev/null || true
+            echo "| Rule | File | Line | Snippet |"
+            echo "|------|------|------|---------|"
+            jq -r '.runs[]?.results[]? | "| \(.ruleId) | \(.locations[0]?.physicalLocation?.artifactLocation?.uri // "N/A") | \(.locations[0]?.physicalLocation?.region?.startLine // "N/A") | `\(.locations[0]?.physicalLocation?.region?.snippet?.text // "N/A")` |"' "${SARIF_PATH}" 2>/dev/null || true
             echo ""
             echo "</details>"
           } >> "$GITHUB_STEP_SUMMARY"
