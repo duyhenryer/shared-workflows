@@ -3,10 +3,6 @@ name: Docker Build & Push (Node)
 # Reusable workflow: builds a Node.js service Docker image and pushes to GHCR.
 # Designed for Node/frontend services; see docker-build-go.yml for Go services.
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 on:
   workflow_call:
     inputs:
