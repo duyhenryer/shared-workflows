@@ -174,11 +174,11 @@ jobs:
           repository: duyhenryer/shared-workflows
           path: .shared-workflows
           sparse-checkout: |
-            .github/actions/slack-ci-notification
+            .github/actions/slack-notification
 
       - name: Slack CI Notification
         if: ${{ steps.slack-channel.outputs.slack_channel_id != '' }}
-        uses: ./.shared-workflows/.github/actions/slack-ci-notification
+        uses: ./.shared-workflows/.github/actions/slack-notification
         with:
           channel_id: ${{ steps.slack-channel.outputs.slack_channel_id }}
           status: ${{ needs.workflow-status.outputs.status }}

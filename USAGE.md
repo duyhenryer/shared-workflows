@@ -393,14 +393,15 @@ jobs:
 
 ---
 
-## Composite Action: slack-ci-notification
+## Composite Action: slack-notification
 
-**Location:** `.github/actions/slack-ci-notification/action.yml`
-**Purpose:** Send CI status notification to Slack with thread support
+**Location:** `.github/actions/slack-notification/action.yml`
+**Purpose:** Send CI/CD status notification to Slack with thread support
 **Used by:** `status.yml` workflow internally
 
 - If `thread_ts` is empty: sends a standalone CI status message (push-to-main flow).
 - If `thread_ts` is provided: replies in that Slack thread (PR flow).
+- If `update_ts` is provided: updates an existing message instead of sending a new one.
 
 ### Inputs
 
@@ -409,6 +410,8 @@ jobs:
 | `channel_id` | **Yes** | Slack channel ID |
 | `status` | **Yes** | CI status: `success`, `failed`, `cancelled` |
 | `thread_ts` | No | Slack thread timestamp to reply to |
+| `update_ts` | No | Slack message timestamp to update (sends new message if empty) |
+| `reply_broadcast` | No | Whether reply should be broadcast to channel (default: `false`) |
 | `slack_bot_token` | **Yes** | Slack bot token |
 
 ### Outputs
@@ -416,6 +419,7 @@ jobs:
 | Output | Description |
 |--------|-------------|
 | `ts` | Timestamp of sent message |
+| `thread_ts` | Thread timestamp for chaining replies |
 
 > This action is used internally by `status.yml`. You do not need to call it directly unless building custom notification workflows.
 
