@@ -93,6 +93,49 @@ jobs:
 
 ---
 
+## gitleaks.yml
+
+**Purpose:** Secret scanning for source code and git history
+**Trigger:** Caller-defined (recommended on PR + push, excluding tags)
+**Features:** Gitleaks CLI binary (MIT, open-source), auto PR diff / full scan, SARIF upload to GitHub Security tab, job summary
+
+> Uses a composite action (`.github/actions/gitleaks/`) that downloads the gitleaks binary directly. No license key required -- works for both personal and organization repositories.
+
+### Inputs
+
+| Parameter | Type | Default | Required | Description |
+|-----------|------|---------|----------|-------------|
+| `runs-on` | string | `"ubuntu-latest"` | No | Runner type |
+| `config-path` | string | `""` | No | Path to custom `.gitleaks.toml` |
+| `gitleaks-version` | string | `"8.21.2"` | No | Gitleaks CLI version to download |
+| `scan-mode` | string | `"auto"` | No | `auto` (PR=diff, push=full), `full`, or `diff` |
+
+### Outputs
+
+| Output | Description |
+|--------|-------------|
+| `exit-code` | Gitleaks exit code (`0`=clean, `1`=leaks found) |
+| `sarif` | Path to SARIF report file |
+| `summary` | Number of findings |
+
+### Usage
+
+**PR block, push warn (recommended):**
+```yaml
+jobs:
+  gitleaks:
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    uses: duyhenryer/shared-workflows/.github/workflows/gitleaks.yml@main
+    continue-on-error: ${{ github.event_name != 'pull_request' }}
+    with:
+      config-path: '.gitleaks.toml' # optional
+    permissions:
+      contents: read
+      security-events: write
+```
+
+---
+
 ## docker-build-go.yml
 
 **Purpose:** Build a Go service Docker image and push to GHCR
@@ -446,26 +489,65 @@ flowchart TD
     TRIVY -->|"pass"| SIGN
 ```
 
-### CI Flow: Pull Request
+### Overall CI Flow (Primary Diagram)
 
-On PR branches: only code quality and notifications. Docker jobs are **skipped** (`if: github.ref == 'refs/heads/main'`).
+Use this as the canonical high-level CI flow after adding `gitleaks.yml`.
+
+```mermaid
+flowchart TD
+    subgraph prPush ["PR / Push (excluding tags)"]
+        PRCHECKS["pr-checks.yml"]
+        GOCHECK["go-check.yml"]
+        GITLEAKS["gitleaks.yml"]
+        SONAR["sonarqube.yml"]
+    end
+
+    subgraph buildOnly ["Push to main/dev only"]
+        BUILD["docker-build-go.yml"]
+        TRIVY["trivy-scan.yml"]
+        SIGN["docker-sign.yml"]
+    end
+
+    NOTIFY["status.yml"]
+
+    GOCHECK --> SONAR
+    GITLEAKS --> SONAR
+    SONAR --> BUILD
+    BUILD --> TRIVY
+    TRIVY --> SIGN
+
+    PRCHECKS --> NOTIFY
+    GOCHECK --> NOTIFY
+    GITLEAKS --> NOTIFY
+    SONAR --> NOTIFY
+    BUILD --> NOTIFY
+    TRIVY --> NOTIFY
+    SIGN --> NOTIFY
+```
+
+### Detailed CI Flow: Pull Request
+
+On PR branches: run code quality + secret scanning + notifications. Docker jobs are **skipped** (`if: github.ref == 'refs/heads/main'`).
 
 ```mermaid
 flowchart TD
     subgraph pr_flow ["PR Flow"]
         PR["pr-checks.yml"]
         GOCHECK["go-check.yml"]
+        GITLEAKS["gitleaks.yml"]
         SONAR["sonarqube.yml"]
         NOTIFY["status.yml"]
 
         GOCHECK --> SONAR
+        GITLEAKS --> SONAR
         PR --> NOTIFY
         GOCHECK --> NOTIFY
+        GITLEAKS --> NOTIFY
         SONAR --> NOTIFY
     end
 ```
 
-### CI Flow: Push to main (merged)
+### Detailed CI Flow: Push to main (merged)
 
 Full pipeline on main: build -> scan -> sign. If scan fails, sign is automatically skipped.
 
@@ -473,6 +555,7 @@ Full pipeline on main: build -> scan -> sign. If scan fails, sign is automatical
 flowchart TD
     subgraph main_flow ["Main Flow"]
         GOCHECK2["go-check.yml"]
+        GITLEAKS2["gitleaks.yml"]
         SONAR2["sonarqube.yml"]
 
         BUILD["docker-build-go.yml"]
@@ -484,6 +567,7 @@ flowchart TD
         NOTIFY2["status.yml"]
 
         GOCHECK2 --> SONAR2
+        GITLEAKS2 --> SONAR2
         SONAR2 --> BUILD
         SONAR2 --> DBINIT
         BUILD -->|"outputs: tags, digest"| SCAN
@@ -493,6 +577,7 @@ flowchart TD
         BUILD --> NOTIFY2
         SCAN --> NOTIFY2
         SIGN --> NOTIFY2
+        GITLEAKS2 --> NOTIFY2
         DBINIT --> NOTIFY2
     end
 ```
@@ -530,9 +615,18 @@ jobs:
       lint: true
     secrets: inherit
 
+  # Secret scanning
+  gitleaks:
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    uses: duyhenryer/shared-workflows/.github/workflows/gitleaks.yml@main
+    continue-on-error: ${{ github.event_name != 'pull_request' }}
+    permissions:
+      contents: read
+      security-events: write
+
   # SonarCloud analysis
   sonar:
-    needs: [go-check]
+    needs: [go-check, gitleaks]
     uses: duyhenryer/shared-workflows/.github/workflows/sonarqube.yml@main
     with:
       project-key: my-org_my-project
@@ -542,7 +636,7 @@ jobs:
 
   # Notify status
   notify:
-    needs: [pr-checks, go-check, sonar]
+    needs: [pr-checks, go-check, gitleaks, sonar]
     if: always()
     uses: duyhenryer/shared-workflows/.github/workflows/status.yml@main
     with:

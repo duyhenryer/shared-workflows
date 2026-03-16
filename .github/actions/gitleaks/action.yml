@@ -1,0 +1,154 @@
+name: Gitleaks Secret Scan
+description: |
+  Download gitleaks CLI binary and scan source code / git history for leaked secrets.
+  Outputs SARIF report and job summary. No license required (MIT-licensed CLI).
+
+inputs:
+  version:
+    required: false
+    description: 'Gitleaks CLI version to download (without v prefix)'
+    default: '8.21.2'
+  config-path:
+    required: false
+    description: 'Path to custom .gitleaks.toml config file'
+    default: ''
+  scan-mode:
+    required: false
+    description: 'Scan mode: "auto" (PR=diff, push=full), "full", or "diff"'
+    default: 'auto'
+  fail-on-leak:
+    required: false
+    description: 'Fail the step when leaks are found'
+    default: 'true'
+
+outputs:
+  exit-code:
+    description: 'Gitleaks exit code (0=clean, 1=leaks found)'
+    value: ${{ steps.scan.outputs.exit-code }}
+  sarif:
+    description: 'Path to SARIF report file'
+    value: ${{ steps.scan.outputs.sarif }}
+  summary:
+    description: 'Number of findings'
+    value: ${{ steps.scan.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    - name: Download gitleaks
+      shell: bash
+      run: |
+        VERSION="${{ inputs.version }}"
+        ARCH=$(uname -m)
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+
+        case "${ARCH}" in
+          x86_64)  ARCH="x64" ;;
+          aarch64) ARCH="arm64" ;;
+          arm64)   ARCH="arm64" ;;
+        esac
+
+        URL="https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_${OS}_${ARCH}.tar.gz"
+        echo "Downloading gitleaks v${VERSION} from ${URL}"
+        curl -sSfL "${URL}" | tar -xz -C "$RUNNER_TEMP"
+        chmod +x "${RUNNER_TEMP}/gitleaks"
+        echo "${RUNNER_TEMP}" >> "$GITHUB_PATH"
+        "${RUNNER_TEMP}/gitleaks" version
+
+    - name: Run gitleaks scan
+      id: scan
+      shell: bash
+      run: |
+        SARIF_PATH="gitleaks-results.sarif"
+        EXIT_CODE_FLAG=1
+        if [ "${{ inputs.fail-on-leak }}" = "false" ]; then
+          EXIT_CODE_FLAG=0
+        fi
+
+        ARGS=(
+          git
+          --report-format sarif
+          --report-path "${SARIF_PATH}"
+          --exit-code "${EXIT_CODE_FLAG}"
+          --no-banner
+          --verbose
+        )
+
+        if [ -n "${{ inputs.config-path }}" ]; then
+          ARGS+=(--config "${{ inputs.config-path }}")
+        fi
+
+        # Determine scan scope
+        MODE="${{ inputs.scan-mode }}"
+        if [ "${MODE}" = "auto" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            MODE="diff"
+          else
+            MODE="full"
+          fi
+        fi
+
+        if [ "${MODE}" = "diff" ]; then
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          if [ -n "${BASE}" ] && [ -n "${HEAD}" ]; then
+            ARGS+=(--log-opts="${BASE}..${HEAD}")
+            echo "Scanning PR diff: ${BASE}..${HEAD}"
+          else
+            echo "No PR SHAs available, falling back to full scan"
+          fi
+        else
+          echo "Running full history scan"
+        fi
+
+        SCAN_EXIT=0
+        gitleaks "${ARGS[@]}" || SCAN_EXIT=$?
+
+        echo "exit-code=${SCAN_EXIT}" >> "$GITHUB_OUTPUT"
+        echo "sarif=${SARIF_PATH}" >> "$GITHUB_OUTPUT"
+
+        # Count findings from SARIF (gracefully degrade when jq is unavailable)
+        FINDINGS=0
+        HAS_JQ=false
+        if command -v jq >/dev/null 2>&1; then
+          HAS_JQ=true
+        fi
+
+        if [ -f "${SARIF_PATH}" ] && [ "${HAS_JQ}" = "true" ]; then
+          FINDINGS=$(jq '[.runs[]?.results[]?] | length' "${SARIF_PATH}" 2>/dev/null || echo 0)
+        elif [ -f "${SARIF_PATH}" ]; then
+          FINDINGS=$(grep -c '"ruleId"' "${SARIF_PATH}" 2>/dev/null || echo 0)
+        fi
+        echo "summary=${FINDINGS}" >> "$GITHUB_OUTPUT"
+
+        # Job summary (matches trivy-scan.yml pattern)
+        {
+          echo "### Gitleaks Secret Scan"
+          echo ""
+          echo "| Property | Value |"
+          echo "|----------|-------|"
+          echo "| Findings | **${FINDINGS}** |"
+          echo "| Scan Mode | \`${MODE}\` |"
+          echo "| Gitleaks Version | \`${{ inputs.version }}\` |"
+          echo "| Config | \`${{ inputs.config-path || 'default' }}\` |"
+          if [ "${SCAN_EXIT}" -ne 0 ] && [ "${EXIT_CODE_FLAG}" -ne 0 ]; then
+            echo "| Status | **FAIL** |"
+          else
+            echo "| Status | **PASS** |"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "${FINDINGS}" -gt 0 ] && [ -f "${SARIF_PATH}" ] && [ "${HAS_JQ}" = "true" ]; then
+          {
+            echo ""
+            echo "<details><summary>Leak Details</summary>"
+            echo ""
+            echo "| Rule | File | Line | Snippet |"
+            echo "|------|------|------|---------|"
+            jq -r '.runs[]?.results[]? | "| \(.ruleId) | \(.locations[0]?.physicalLocation?.artifactLocation?.uri // "N/A") | \(.locations[0]?.physicalLocation?.region?.startLine // "N/A") | `\(.locations[0]?.physicalLocation?.region?.snippet?.text // "N/A")` |"' "${SARIF_PATH}" 2>/dev/null || true
+            echo ""
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        exit "${SCAN_EXIT}"
