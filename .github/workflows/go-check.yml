@@ -48,49 +48,55 @@ on:
 
 
 jobs:
-  # Run test
   test:
-    name: Test (${{ matrix.go-version }})
+    name: Test
     timeout-minutes: 60
     runs-on: ${{ inputs.runs-on }}
-    
-    strategy:
-      matrix:
-        go-version: ${{ inputs.test-stable && fromJSON('["project", "stable"]') || fromJSON('["project"]') }}
-      fail-fast: false
-    
-    # Stable version failures are non-blocking (for early compatibility detection)
-    continue-on-error: ${{ matrix.go-version == 'stable' }}
-    
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Go (project version)
+      - name: Setup Go
         uses: actions/setup-go@v6
-        if: ${{ inputs.setup-go == true && matrix.go-version == 'project' }}
+        if: ${{ inputs.setup-go }}
         with:
           go-version-file: ${{ inputs.gomod-path }}
 
+      - name: Show Go version
+        run: go version
+
+      - name: Unit Test
+        run: ${{ inputs.command-test }}
+
+      - name: Archive code coverage results
+        uses: actions/upload-artifact@v7
+        if: success()
+        with:
+          name: coverage-report
+          path: coverage.out
+          retention-days: 1
+
+  test-stable:
+    name: Test (stable)
+    if: ${{ inputs.test-stable }}
+    timeout-minutes: 60
+    runs-on: ${{ inputs.runs-on }}
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Setup Go (stable)
         uses: actions/setup-go@v6
-        if: ${{ inputs.setup-go == true && matrix.go-version == 'stable' }}
+        if: ${{ inputs.setup-go }}
         with:
           go-version: 'stable'
 
       - name: Show Go version
         run: go version
 
-      - name: "Unit Test"
+      - name: Unit Test
         run: ${{ inputs.command-test }}
-
-      - name: Archive code coverage results
-        uses: actions/upload-artifact@v7
-        if: success() && matrix.go-version == 'project'
-        with:
-          name: coverage-report
-          path: coverage.out
-          retention-days: 1
 
   # Run lint
   lint:
