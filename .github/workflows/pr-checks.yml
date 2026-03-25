@@ -30,7 +30,7 @@ jobs:
     - name: Validate Source Branch
       run: |
         # Allow standard gitflow/trunk-based prefixes
-        if [[ ! ${{ github.head_ref }} =~ ^(feature|feat|fix|bugfix|hotfix|release|chore|docs|refactor|test|ci|renovate|build)\/ ]]; then
+        if [[ ! ${{ github.head_ref }} =~ ^(feature|feat|fix|bugfix|hotfix|release|chore|docs|refactor|dependabot|ci|renovate|build)\/ ]]; then
           echo "Error: Source branch '${{ github.head_ref }}' does not match allowed patterns (feat/*, fix/*, chore/*, etc.)"
           echo "Create a new branch with a valid prefix and open a new PR."
           exit 1
