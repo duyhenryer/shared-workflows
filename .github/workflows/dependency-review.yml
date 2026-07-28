@@ -1,0 +1,101 @@
+name: Dependency Review
+
+# Reusable workflow: reviews the dependencies ADDED OR CHANGED by a pull request
+# and blocks the PR when a new dependency carries a known vulnerability.
+#
+# Only meaningful on pull_request — there is no "before/after" to diff on a push
+# or a schedule, so the job self-skips there. `pull_request_target` is
+# deliberately not supported: it runs with base-repo credentials on fork code.
+#
+# Two invocations, one job:
+#   A) vulnerability gate  — blocks now
+#   B) license audit       — report-only until Legal signs off on the allowlist
+# Splitting them means the license policy can be baselined without disarming the
+# vulnerability gate.
+#
+# Prerequisites: Dependency Graph enabled; private repos need GitHub Code
+# Security / Advanced Security; self-hosted runners must be new enough for the
+# Node 24 runtime this action requires.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      fail-on-severity:
+        description: 'Minimum severity that blocks the PR: low, moderate, high, critical'
+        required: false
+        type: string
+        default: 'critical'
+      fail-on-scopes:
+        description: 'Dependency scopes to block on (comma-separated): unknown, runtime, development'
+        required: false
+        type: string
+        default: 'runtime'
+      allowed-licenses:
+        description: |
+          Comma-separated allowlist of licenses (e.g. "MIT, Apache-2.0, BSD-3-Clause").
+          Empty (default) skips the license check entirely — keep it empty until
+          Legal/Compliance approves a policy. Do not copy an allowlist from an
+          unrelated open-source project.
+        required: false
+        type: string
+        default: ''
+      license-enforce:
+        description: 'Block the PR on license violations. False = report-only (warn).'
+        required: false
+        type: boolean
+        default: false
+      allowed-ghsas:
+        description: 'Comma-separated GitHub Advisory IDs to waive (e.g. "GHSA-abcd-1234-5679"). Each needs an owner, ticket and expiry.'
+        required: false
+        type: string
+        default: ''
+      allowed-dependencies-licenses:
+        description: 'Comma-separated purls exempt from the license policy (e.g. "pkg:golang/example.com/foo").'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 15
+    # No pull-requests: write — comment-summary-in-pr stays off, results are read
+    # from the Job Summary and the Checks UI instead.
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Dependency review (vulnerabilities)
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          vulnerability-check: true
+          license-check: false
+          fail-on-severity: ${{ inputs.fail-on-severity }}
+          fail-on-scopes: ${{ inputs.fail-on-scopes }}
+          allow-ghsas: ${{ inputs.allowed-ghsas }}
+          show-patched-versions: true
+          comment-summary-in-pr: never
+
+      # if: always() so a blocked vulnerability still gets its license audit.
+      - name: Dependency review (licenses)
+        if: always() && inputs.allowed-licenses != ''
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          vulnerability-check: false
+          license-check: true
+          allow-licenses: ${{ inputs.allowed-licenses }}
+          allow-dependencies-licenses: ${{ inputs.allowed-dependencies-licenses }}
+          warn-only: ${{ !inputs.license-enforce }}
+          comment-summary-in-pr: never

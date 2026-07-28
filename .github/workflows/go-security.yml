@@ -1,0 +1,263 @@
+name: Go Security
+
+# Aggregate reusable workflow: the single security entrypoint for Go services.
+# Call it from check.yml (PR), build.yml (push main) and security-scheduled.yml
+# (weekly) instead of wiring each scanner into every service repo.
+#
+#   codeql-go          always      source scanning (Go)
+#   codeql-actions     optional    workflow scanning (GitHub Actions)
+#   govulncheck        always      reachable Go dependency vulnerabilities
+#   dependency-review  PR only     new dependencies + license policy
+#   security-gate      always      one stable check to require in the Ruleset
+#
+# The caller must grant the maximum permission set needed by the nested jobs —
+# permissions can only be kept or reduced down a reusable-workflow call chain:
+#
+#   permissions:
+#     actions: read
+#     contents: read
+#     pull-requests: read
+#     security-events: write
+#
+# No secrets are required. Never pass `secrets: inherit` to this workflow.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      go-version-file:
+        description: 'Path to go.mod, used to pick the Go version'
+        required: false
+        type: string
+        default: 'go.mod'
+      go-working-directory:
+        description: 'Directory to run Go tooling in (for monorepos / nested modules)'
+        required: false
+        type: string
+        default: '.'
+      codeql-queries:
+        description: 'CodeQL query suite'
+        required: false
+        type: string
+        default: 'security-extended'
+      codeql-build-mode:
+        description: 'CodeQL build mode for Go: autobuild or manual (use manual for generated code / custom builds)'
+        required: false
+        type: string
+        default: 'autobuild'
+      codeql-manual-build-command:
+        description: 'Build command, required when codeql-build-mode is "manual"'
+        required: false
+        type: string
+        default: ''
+      scan-actions:
+        description: 'Also run CodeQL against this repo GitHub Actions workflows'
+        required: false
+        type: boolean
+        default: false
+      govulncheck-enforce:
+        description: 'Fail on govulncheck findings. Set false to baseline a repo that is not clean yet.'
+        required: false
+        type: boolean
+        default: true
+      govulncheck-version:
+        description: 'Pinned golang.org/x/vuln version'
+        required: false
+        type: string
+        default: 'v1.6.0'
+      govulncheck-build-tags:
+        description: 'Comma-separated build tags for govulncheck'
+        required: false
+        type: string
+        default: ''
+      dependency-review-severity:
+        description: 'Minimum severity that blocks a PR: low, moderate, high, critical'
+        required: false
+        type: string
+        default: 'critical'
+      dependency-review-scopes:
+        description: 'Dependency scopes to block on (comma-separated)'
+        required: false
+        type: string
+        default: 'runtime'
+      allowed-licenses:
+        description: 'License allowlist. Empty (default) skips the license check.'
+        required: false
+        type: string
+        default: ''
+      license-enforce:
+        description: 'Block on license violations instead of warning'
+        required: false
+        type: boolean
+        default: false
+      allowed-ghsas:
+        description: 'Comma-separated GitHub Advisory IDs waived in Dependency Review. Each needs an owner, ticket and expiry.'
+        required: false
+        type: string
+        default: ''
+      allowed-dependencies-licenses:
+        description: 'Comma-separated purls exempt from the license policy.'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  # Relative `uses` keeps every nested workflow on the same commit as this file,
+  # so pinning the caller to one SHA pins the whole security stack.
+  codeql-go:
+    uses: ./.github/workflows/codeql.yml
+    with:
+      runs-on: ${{ inputs.runs-on }}
+      language: go
+      build-mode: ${{ inputs.codeql-build-mode }}
+      queries: ${{ inputs.codeql-queries }}
+      go-version-file: ${{ inputs.go-version-file }}
+      manual-build-command: ${{ inputs.codeql-manual-build-command }}
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+  codeql-actions:
+    if: inputs.scan-actions
+    uses: ./.github/workflows/codeql.yml
+    with:
+      runs-on: ${{ inputs.runs-on }}
+      language: actions
+      build-mode: none
+      queries: ${{ inputs.codeql-queries }}
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+  govulncheck:
+    uses: ./.github/workflows/govulncheck.yml
+    with:
+      runs-on: ${{ inputs.runs-on }}
+      go-version-file: ${{ inputs.go-version-file }}
+      working-directory: ${{ inputs.go-working-directory }}
+      govulncheck-version: ${{ inputs.govulncheck-version }}
+      build-tags: ${{ inputs.govulncheck-build-tags }}
+      enforce: ${{ inputs.govulncheck-enforce }}
+    permissions:
+      contents: read
+      security-events: write
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/dependency-review.yml
+    with:
+      runs-on: ${{ inputs.runs-on }}
+      fail-on-severity: ${{ inputs.dependency-review-severity }}
+      fail-on-scopes: ${{ inputs.dependency-review-scopes }}
+      allowed-licenses: ${{ inputs.allowed-licenses }}
+      license-enforce: ${{ inputs.license-enforce }}
+      allowed-ghsas: ${{ inputs.allowed-ghsas }}
+      allowed-dependencies-licenses: ${{ inputs.allowed-dependencies-licenses }}
+    permissions:
+      contents: read
+
+  # The one check to require in the branch Ruleset: "go-security / Security Gate".
+  #
+  # It confirms the scanners actually ran and that the directly-blocking scanners
+  # passed. It is NOT a CodeQL severity gate — CodeQL alerts are enforced
+  # separately by Code Scanning merge protection.
+  security-gate:
+    name: Security Gate
+    if: always()
+    needs:
+      - codeql-go
+      - codeql-actions
+      - govulncheck
+      - dependency-review
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Evaluate scanner results
+        env:
+          CODEQL_GO: ${{ needs.codeql-go.result }}
+          CODEQL_ACTIONS: ${{ needs.codeql-actions.result }}
+          GOVULNCHECK: ${{ needs.govulncheck.result }}
+          DEPENDENCY_REVIEW: ${{ needs.dependency-review.result }}
+          SCAN_ACTIONS: ${{ inputs.scan-actions }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+        run: |
+          set -euo pipefail
+
+          fail=0
+
+          # Results are checked per job rather than with a blanket
+          # contains(needs.*.result, 'failure'): "skipped" is a legitimate result
+          # for codeql-actions (disabled) and dependency-review (not a PR), but
+          # never for the scanners that are always supposed to run.
+          require_success() {
+            label="$1"
+            result="$2"
+            if [ "$result" = "success" ]; then
+              echo "| ${label} | ✅ success |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "| ${label} | ❌ ${result} |" >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::${label} did not succeed (result: ${result})."
+              fail=1
+            fi
+          }
+
+          require_success_or_skip() {
+            label="$1"
+            result="$2"
+            reason="$3"
+            case "$result" in
+              success) echo "| ${label} | ✅ success |" >> "$GITHUB_STEP_SUMMARY" ;;
+              skipped) echo "| ${label} | ⚪ skipped (${reason}) |" >> "$GITHUB_STEP_SUMMARY" ;;
+              *)
+                echo "| ${label} | ❌ ${result} |" >> "$GITHUB_STEP_SUMMARY"
+                echo "::error::${label} did not succeed (result: ${result})."
+                fail=1
+                ;;
+            esac
+          }
+
+          {
+            echo "### Security Gate"
+            echo ""
+            echo "| Scanner | Result |"
+            echo "|---------|--------|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          require_success "CodeQL (go)" "$CODEQL_GO"
+          require_success "Govulncheck" "$GOVULNCHECK"
+
+          if [ "$SCAN_ACTIONS" = "true" ]; then
+            require_success "CodeQL (actions)" "$CODEQL_ACTIONS"
+          else
+            require_success_or_skip "CodeQL (actions)" "$CODEQL_ACTIONS" "scan-actions=false"
+          fi
+
+          if [ "$IS_PR" = "true" ]; then
+            require_success "Dependency Review" "$DEPENDENCY_REVIEW"
+          else
+            require_success_or_skip "Dependency Review" "$DEPENDENCY_REVIEW" "not a pull request"
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            {
+              echo ""
+              echo "**Security Gate: FAIL**"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          {
+            echo ""
+            echo "**Security Gate: PASS**"
+            echo ""
+            echo "> The gate confirms the scanners ran and the blocking scanners passed."
+            echo "> CodeQL alert severity is enforced separately by Code Scanning merge protection."
+          } >> "$GITHUB_STEP_SUMMARY"
