@@ -1,0 +1,126 @@
+# Copy to a Go service repo as .github/workflows/build.yml
+#
+# Push-to-main pipeline. docker-build and release-binary depend on go-security,
+# so a blocking Govulncheck finding stops the image from ever reaching GHCR —
+# which means Flux never sees a deployable tag.
+#
+# Dependency Review self-skips here: a push has no dependency diff to review.
+# The Security Gate accounts for that and still passes.
+#
+# Do NOT add a `schedule:` trigger to this file — a scheduled run must not build
+# or push images. Use go-service-security-scheduled.yml instead.
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  go-check:
+    uses: duynhlab/gha-workflows/.github/workflows/go-check.yml@main
+    with:
+      command-test: 'go test -race -coverprofile=coverage.out -covermode=atomic ./...'
+    secrets: inherit
+
+  # No tag exclusion here on purpose: a skipped `needs` dependency skips every
+  # downstream job, which would silently turn a tag build into a no-op.
+  gitleaks:
+    uses: duynhlab/gha-workflows/.github/workflows/gitleaks.yml@main
+    permissions:
+      contents: read
+      security-events: write
+
+  go-security:
+    uses: duynhlab/gha-workflows/.github/workflows/go-security.yml@main
+    with:
+      go-version-file: go.mod
+      go-working-directory: .
+      govulncheck-enforce: true
+      scan-actions: false
+      license-enforce: false
+    # pull-requests: read is not needed here — Dependency Review does not run on push.
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+  sonar:
+    needs: [go-check, gitleaks]
+    uses: duynhlab/gha-workflows/.github/workflows/sonarqube.yml@main
+    with:
+      project-key: my-org_my-service
+      organization: my-org
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # Explicit dependencies (gitleaks listed directly rather than relying on the
+  # sonar edge) so the gate graph is auditable at a glance.
+  docker-build:
+    needs: [go-check, gitleaks, sonar, go-security]
+    uses: duynhlab/gha-workflows/.github/workflows/docker-build-go.yml@main
+    with:
+      image-name: my-service
+      push: true
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+
+  trivy-report:
+    needs: [docker-build]
+    if: needs.docker-build.outputs.scan-status == 'pass'
+    uses: duynhlab/gha-workflows/.github/workflows/trivy-scan.yml@main
+    with:
+      image-ref: ghcr.io/${{ github.repository }}/my-service@${{ needs.docker-build.outputs.digest }}
+      severity: 'CRITICAL,HIGH,MEDIUM'
+      exit-code: '0'
+      ignore-unfixed: true
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+
+  docker-sign:
+    needs: [docker-build]
+    uses: duynhlab/gha-workflows/.github/workflows/docker-sign.yml@main
+    with:
+      tags: ${{ needs.docker-build.outputs.tags }}
+      digest: ${{ needs.docker-build.outputs.digest }}
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+  release-binary:
+    needs: [go-check, gitleaks, sonar, go-security]
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: duynhlab/gha-workflows/.github/workflows/goreleaser.yml@main
+    secrets: inherit
+    permissions:
+      contents: write
+
+  notify:
+    needs:
+      - go-check
+      - gitleaks
+      - sonar
+      - go-security
+      - docker-build
+      - trivy-report
+      - docker-sign
+      - release-binary
+    if: always()
+    uses: duynhlab/gha-workflows/.github/workflows/status.yml@main
+    with:
+      slack_channel_id: "C0AD82A9A74"
+    secrets:
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}

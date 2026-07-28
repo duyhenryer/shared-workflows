@@ -138,6 +138,186 @@ jobs:
 
 ---
 
+## go-security.yml
+
+**Purpose:** Single security entrypoint for Go services -- CodeQL + Govulncheck + Dependency Review behind one stable gate
+**Trigger:** Caller-defined (recommended: PR, push to main, and a weekly schedule)
+**Features:** Nested reusable workflows, per-language SARIF categories, `Security Gate` check for branch rulesets, no secrets required
+
+> Call this instead of wiring `codeql.yml` / `govulncheck.yml` / `dependency-review.yml` into every service. See [docs/go-security.md](docs/go-security.md) for the rollout plan, policy matrix and exception process.
+
+### Inputs
+
+| Parameter | Type | Default | Required | Description |
+|-----------|------|---------|----------|-------------|
+| `runs-on` | string | `"ubuntu-latest"` | No | Runner type |
+| `go-version-file` | string | `"go.mod"` | No | Path to `go.mod`, used to pick the Go version |
+| `go-working-directory` | string | `"."` | No | Directory for Go tooling (monorepo / nested modules) |
+| `codeql-queries` | string | `"security-extended"` | No | CodeQL query suite |
+| `codeql-build-mode` | string | `"autobuild"` | No | `autobuild` or `manual` (for generated code / custom builds) |
+| `codeql-manual-build-command` | string | `""` | No | Build command, required when `codeql-build-mode: manual` |
+| `scan-actions` | boolean | `false` | No | Also run CodeQL against the repo's own GitHub Actions workflows |
+| `govulncheck-enforce` | boolean | `true` | No | Fail on govulncheck findings. `false` = report-only baselining |
+| `govulncheck-version` | string | `"v1.6.0"` | No | Pinned `golang.org/x/vuln` version |
+| `govulncheck-build-tags` | string | `""` | No | Comma-separated build tags |
+| `dependency-review-severity` | string | `"critical"` | No | `low`, `moderate`, `high`, or `critical` |
+| `dependency-review-scopes` | string | `"runtime"` | No | Dependency scopes to block on |
+| `allowed-licenses` | string | `""` | No | License allowlist. Empty = license check skipped |
+| `license-enforce` | boolean | `false` | No | Block on license violations instead of warning |
+
+### Jobs
+
+| Job | Runs when | Blocking |
+|-----|-----------|----------|
+| `codeql-go` | Always | Execution only -- severity via Code Scanning merge protection |
+| `codeql-actions` | `scan-actions: true` | Execution only |
+| `govulncheck` | Always | Yes, when `govulncheck-enforce: true` |
+| `dependency-review` | `pull_request` only | Yes (vulnerabilities); licenses per `license-enforce` |
+| `security-gate` | Always (`if: always()`) | **Yes -- require this check** |
+
+### Usage
+
+**Pull request:**
+```yaml
+jobs:
+  go-security:
+    uses: duynhlab/gha-workflows/.github/workflows/go-security.yml@main
+    with:
+      go-version-file: go.mod
+      govulncheck-enforce: true
+      dependency-review-severity: critical
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      security-events: write
+```
+
+> **Do not pass `secrets: inherit`** -- this workflow needs no secrets. The caller must grant the full permission set above, because permissions can only be kept or reduced down a reusable-workflow call chain.
+
+**Baselining a repo that is not clean yet:**
+```yaml
+    with:
+      govulncheck-enforce: false   # report-only; fix findings, then flip to true
+```
+
+---
+
+## codeql.yml
+
+**Purpose:** Run one CodeQL analysis for one language
+**Features:** Per-language SARIF category (`/language:<lang>`), `security-extended` by default, `persist-credentials: false`
+
+> Usually consumed through `go-security.yml`. Call it directly when you need a language that isn't part of the Go bundle -- for example scanning a workflow-only repository with `language: actions`.
+
+### Inputs
+
+| Parameter | Type | Default | Required | Description |
+|-----------|------|---------|----------|-------------|
+| `runs-on` | string | `"ubuntu-latest"` | No | Runner type |
+| `language` | string | -- | **Yes** | CodeQL language, e.g. `go`, `actions` |
+| `build-mode` | string | -- | **Yes** | `autobuild` (compiled), `none` (interpreted/config), or `manual` |
+| `queries` | string | `"security-extended"` | No | Query suite |
+| `go-version-file` | string | `"go.mod"` | No | Used only when `language: go` |
+| `manual-build-command` | string | `""` | No | Required when `build-mode: manual` |
+
+### Usage
+
+```yaml
+jobs:
+  codeql-actions:
+    uses: duynhlab/gha-workflows/.github/workflows/codeql.yml@main
+    with:
+      language: actions
+      build-mode: none
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+```
+
+> A green CodeQL job does **not** mean the repo has no alerts. Enforce alert severity with a Code Scanning merge protection rule in the branch ruleset.
+
+---
+
+## govulncheck.yml
+
+**Purpose:** Find known vulnerabilities in Go dependencies that are actually reachable from your code
+**Features:** Call-graph analysis (low noise), pinned tool version, real blocking gate, SARIF upload under category `govulncheck`
+
+> `govulncheck -format sarif` **always exits 0**, even with findings. This workflow therefore runs text mode for the exit code and SARIF mode for the report, and a final step owns the pass/fail decision.
+
+### Inputs
+
+| Parameter | Type | Default | Required | Description |
+|-----------|------|---------|----------|-------------|
+| `runs-on` | string | `"ubuntu-latest"` | No | Runner type |
+| `go-version-file` | string | `"go.mod"` | No | Path to `go.mod` (never `go-version: stable` -- results depend on the toolchain) |
+| `working-directory` | string | `"."` | No | Directory to scan |
+| `package-pattern` | string | `"./..."` | No | Package pattern |
+| `govulncheck-version` | string | `"v1.6.0"` | No | Pinned `golang.org/x/vuln` version |
+| `build-tags` | string | `""` | No | Comma-separated build tags |
+| `include-tests` | boolean | `false` | No | Also analyze test files |
+| `enforce` | boolean | `true` | No | Fail on findings. `false` = report-only |
+
+### Outputs
+
+| Output | Description |
+|--------|-------------|
+| `exit-code` | `0` = clean, `3` = vulnerabilities found, other = tool/build error |
+| `status` | `clean`, `vulnerable`, or `error` |
+
+### Usage
+
+```yaml
+jobs:
+  govulncheck:
+    uses: duynhlab/gha-workflows/.github/workflows/govulncheck.yml@main
+    with:
+      enforce: true
+    permissions:
+      contents: read
+      security-events: write
+```
+
+> A tool or build error (any exit code other than `0` or `3`) fails the job **even when `enforce: false`** -- a scan that did not run is not a clean scan.
+
+---
+
+## dependency-review.yml
+
+**Purpose:** Block pull requests that introduce dependencies with known vulnerabilities, and audit licenses
+**Trigger:** `pull_request` only -- self-skips on push/schedule (there is no dependency diff to review)
+**Features:** Split vulnerability gate and license audit, least-privilege (`contents: read` only)
+
+> **Prerequisites:** Dependency Graph enabled; private repos need GitHub Code Security / Advanced Security; self-hosted runners must support the Node 24 runtime used by v5. `pull_request_target` is deliberately not supported.
+
+### Inputs
+
+| Parameter | Type | Default | Required | Description |
+|-----------|------|---------|----------|-------------|
+| `runs-on` | string | `"ubuntu-latest"` | No | Runner type |
+| `fail-on-severity` | string | `"critical"` | No | `low`, `moderate`, `high`, or `critical` |
+| `fail-on-scopes` | string | `"runtime"` | No | `unknown`, `runtime`, `development` |
+| `allowed-licenses` | string | `""` | No | License allowlist. **Empty skips the license check** -- keep it empty until Legal approves a policy |
+| `license-enforce` | boolean | `false` | No | `false` = warn only, `true` = block |
+| `allowed-ghsas` | string | `""` | No | Waived advisory IDs. Each needs an owner, ticket and expiry |
+| `allowed-dependencies-licenses` | string | `""` | No | purls exempt from the license policy |
+
+### Usage
+
+```yaml
+jobs:
+  dependency-review:
+    uses: duynhlab/gha-workflows/.github/workflows/dependency-review.yml@main
+    with:
+      fail-on-severity: critical
+    permissions:
+      contents: read
+```
+
+---
+
 ## docker-build-go.yml
 
 **Purpose:** Build a Go service Docker image, scan for vulnerabilities, and push to GHCR only if clean
@@ -531,6 +711,7 @@ flowchart TD
         PRCHECKS["pr-checks.yml"]
         GOCHECK["go-check.yml"]
         GITLEAKS["gitleaks.yml"]
+        SEC["go-security.yml<br/>(CodeQL + Govulncheck + Dep Review)"]
         SONAR["sonarqube.yml"]
     end
 
@@ -545,17 +726,21 @@ flowchart TD
     GOCHECK --> SONAR
     GITLEAKS --> SONAR
     SONAR --> BUILD
+    SEC --> BUILD
     BUILD --> SIGN
     BUILD -.-> TRIVY_RPT
 
     PRCHECKS --> NOTIFY
     GOCHECK --> NOTIFY
     GITLEAKS --> NOTIFY
+    SEC --> NOTIFY
     SONAR --> NOTIFY
     BUILD --> NOTIFY
     SIGN --> NOTIFY
     TRIVY_RPT --> NOTIFY
 ```
+
+> `go-security.yml` runs **in parallel** with `go-check`/`gitleaks`/`sonarqube` (it is not chained behind Sonar, to keep PR latency down), but `docker-build` waits for it so a blocking Govulncheck finding prevents the image from ever being pushed.
 
 ### Detailed CI Flow: Pull Request
 
@@ -570,14 +755,33 @@ flowchart TD
         SONAR["sonarqube.yml"]
         NOTIFY["status.yml"]
 
+        subgraph sec ["go-security.yml"]
+            CQGO["codeql-go"]
+            CQACT["codeql-actions<br/>(optional)"]
+            GOVULN["govulncheck"]
+            DEPREV["dependency-review"]
+            GATE["Security Gate"]
+
+            CQGO --> GATE
+            CQACT --> GATE
+            GOVULN --> GATE
+            DEPREV --> GATE
+        end
+
         GOCHECK --> SONAR
         GITLEAKS --> SONAR
         PR --> NOTIFY
         GOCHECK --> NOTIFY
         GITLEAKS --> NOTIFY
         SONAR --> NOTIFY
+        GATE --> NOTIFY
+        GATE --> MERGE["Merge<br/>(ruleset: required checks<br/>+ Code Scanning merge protection)"]
     end
+
+    style GATE fill:#3b82f6,color:#fff
 ```
+
+Required status checks to configure on `main`: `go-check / Test`, `gitleaks / Gitleaks Scan`, `go-security / Security Gate`, plus a Code Scanning merge protection rule for CodeQL alerts. Do **not** require `notify`.
 
 ### Detailed CI Flow: Push to main (merged)
 
@@ -598,24 +802,48 @@ flowchart TD
 
         NOTIFY2["status.yml"]
 
+        SEC2["go-security.yml<br/>(Dependency Review self-skips on push)"]
+
         GOCHECK2 --> SONAR2
         GITLEAKS2 --> SONAR2
         SONAR2 --> BUILD
+        SEC2 --> BUILD
         SONAR2 --> DBINIT
+        SEC2 --> DBINIT
         BUILD -->|"scan pass → pushed"| SIGN
         BUILD -.->|"scan fail"| BUILD_FAIL["Image NOT pushed"]
+        SEC2 -.->|"Security Gate fail"| BUILD_FAIL
         BUILD -.->|"optional"| TRIVY_RPT
 
         BUILD --> NOTIFY2
         SIGN --> NOTIFY2
         TRIVY_RPT --> NOTIFY2
         GITLEAKS2 --> NOTIFY2
+        SEC2 --> NOTIFY2
         DBINIT --> NOTIFY2
     end
 
     style BUILD fill:#3b82f6,color:#fff
     style BUILD_FAIL fill:#ef4444,color:#fff
 ```
+
+> Because `docker-build` waits for `go-security`, a Govulncheck gate failure means no new image reaches GHCR -- so Flux never sees a deployable tag. This is a source/dependency gate; the final-image Trivy gate, SBOM and Cosign remain a separate supply-chain layer.
+
+### Scheduled Security Scan
+
+Weekly source and dependency re-scan, decoupled from the build so it can never push an image or trigger a Flux deployment.
+
+```mermaid
+flowchart LR
+    CRON["schedule: '17 2 * * 1'<br/>+ workflow_dispatch"] --> SEC3["go-security.yml"]
+    SEC3 --> CQ3["CodeQL (go)"]
+    SEC3 --> GV3["Govulncheck"]
+    SEC3 -.->|"skipped: not a PR"| DR3["Dependency Review"]
+    CQ3 --> TAB["GitHub Security tab"]
+    GV3 --> TAB
+```
+
+Use a weekly cron with a staggered minute (17 / 29 / 41) across repository groups -- a daily `0 2 * * *` across dozens of services creates a thundering herd on the runners.
 
 ---
 

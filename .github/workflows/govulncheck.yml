@@ -1,0 +1,228 @@
+name: Govulncheck
+
+# Reusable workflow: scans Go dependencies for known vulnerabilities that are
+# actually reachable from the service's code (call-graph analysis), so it is far
+# less noisy than a plain "dependency version" scanner.
+#
+# Why the gate and the SARIF report are two separate runs:
+#   `govulncheck -format sarif` ALWAYS exits 0, even when vulnerabilities are
+#   found (only the text handler returns the "vulnerabilities found" error, exit
+#   code 3). Using the SARIF command's exit code as a gate would silently pass
+#   every build. So we run text mode for the exit code, SARIF mode for the report,
+#   and let a final step decide pass/fail.
+#
+# Exit codes (golang.org/x/vuln v1.6.0):
+#   0 -> clean
+#   3 -> vulnerabilities found
+#   * -> tool/build error; treated as a failure (fail closed), even when
+#        enforce is false, because "did not run" must never look like "clean".
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      go-version-file:
+        description: 'Path to go.mod, used to pick the Go version'
+        required: false
+        type: string
+        default: 'go.mod'
+      working-directory:
+        description: 'Directory to run govulncheck in (for monorepos / nested modules)'
+        required: false
+        type: string
+        default: '.'
+      package-pattern:
+        description: 'Package pattern to scan'
+        required: false
+        type: string
+        default: './...'
+      govulncheck-version:
+        description: 'Pinned golang.org/x/vuln version'
+        required: false
+        type: string
+        default: 'v1.6.0'
+      build-tags:
+        description: 'Comma-separated list of build tags to pass to govulncheck'
+        required: false
+        type: string
+        default: ''
+      include-tests:
+        description: 'Also analyze test files'
+        required: false
+        type: boolean
+        default: false
+      enforce:
+        description: 'Fail the job when vulnerabilities are found. Set false for report-only baselining.'
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      exit-code:
+        description: 'govulncheck exit code (0=clean, 3=vulnerabilities, other=error)'
+        value: ${{ jobs.govulncheck.outputs.exit-code }}
+      status:
+        description: 'Scan result: clean, vulnerable, or error'
+        value: ${{ jobs.govulncheck.outputs.status }}
+
+jobs:
+  govulncheck:
+    name: Govulncheck
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+
+    outputs:
+      exit-code: ${{ steps.gate.outputs.exit-code }}
+      status: ${{ steps.gate.outputs.status }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Use the service's own Go version, never go-version: stable — govulncheck
+      # results depend on the toolchain and build configuration in use.
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: ${{ inputs.go-version-file }}
+          cache: true
+
+      - name: Download dependencies
+        working-directory: ${{ inputs.working-directory }}
+        run: go mod download
+
+      - name: Install govulncheck
+        env:
+          GOVULNCHECK_VERSION: ${{ inputs.govulncheck-version }}
+        run: go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+
+      # Text mode: this is the only run whose exit code is meaningful.
+      # continue-on-error keeps the workflow going so the SARIF report is still
+      # produced and uploaded; the final step owns the pass/fail decision.
+      - name: Run govulncheck (gate)
+        id: gate
+        continue-on-error: true
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          PACKAGE_PATTERN: ${{ inputs.package-pattern }}
+          BUILD_TAGS: ${{ inputs.build-tags }}
+          INCLUDE_TESTS: ${{ inputs.include-tests }}
+        run: |
+          set -uo pipefail
+
+          # The package pattern goes into the array too, so it is never empty:
+          # expanding an empty array under `set -u` aborts on bash < 4.4, which
+          # some self-hosted runners still ship.
+          args=()
+          if [ -n "$BUILD_TAGS" ]; then
+            args+=(-tags "$BUILD_TAGS")
+          fi
+          if [ "$INCLUDE_TESTS" = "true" ]; then
+            args+=(-test)
+          fi
+          args+=("$PACKAGE_PATTERN")
+
+          set +e
+          govulncheck "${args[@]}" 2>&1 | tee govulncheck.txt
+          code="${PIPESTATUS[0]}"
+          set -e
+
+          case "$code" in
+            0) status=clean ;;
+            3) status=vulnerable ;;
+            *) status=error ;;
+          esac
+
+          {
+            echo "exit-code=${code}"
+            echo "status=${status}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Govulncheck"
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| Result | \`${status}\` |"
+            echo "| Exit code | \`${code}\` |"
+            echo "| Packages | \`${PACKAGE_PATTERN}\` |"
+            echo "| Build tags | \`${BUILD_TAGS:-none}\` |"
+            echo "| Include tests | \`${INCLUDE_TESTS}\` |"
+            echo ""
+            echo "<details><summary>govulncheck output</summary>"
+            echo ""
+            echo '```'
+            cat govulncheck.txt
+            echo '```'
+            echo ""
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit "$code"
+
+      # Report-only run. Its exit code is deliberately ignored (always 0).
+      - name: Generate SARIF report
+        if: always()
+        continue-on-error: true
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          PACKAGE_PATTERN: ${{ inputs.package-pattern }}
+          BUILD_TAGS: ${{ inputs.build-tags }}
+          INCLUDE_TESTS: ${{ inputs.include-tests }}
+        run: |
+          set -euo pipefail
+
+          args=(-format sarif)
+          if [ -n "$BUILD_TAGS" ]; then
+            args+=(-tags "$BUILD_TAGS")
+          fi
+          if [ "$INCLUDE_TESTS" = "true" ]; then
+            args+=(-test)
+          fi
+          args+=("$PACKAGE_PATTERN")
+
+          govulncheck "${args[@]}" > govulncheck.sarif
+
+      # continue-on-error: some orgs restrict third-party SARIF uploads (notably
+      # on Dependabot PRs). The gate must not depend on the upload succeeding.
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          sarif_file: ${{ inputs.working-directory }}/govulncheck.sarif
+          category: govulncheck
+
+      # Single source of truth for pass/fail.
+      - name: Enforce result
+        if: always()
+        env:
+          EXIT_CODE: ${{ steps.gate.outputs.exit-code }}
+          ENFORCE: ${{ inputs.enforce }}
+        run: |
+          set -euo pipefail
+
+          case "${EXIT_CODE:-}" in
+            0)
+              echo "No known vulnerabilities found in reachable code."
+              ;;
+            3)
+              if [ "$ENFORCE" = "true" ]; then
+                echo "::error::govulncheck found known vulnerabilities in reachable code. See the job summary and the Security tab."
+                exit 1
+              fi
+              echo "::warning::govulncheck found known vulnerabilities (report-only: enforce=false). Fix the baseline, then set enforce=true."
+              ;;
+            *)
+              echo "::error::govulncheck did not complete (exit code '${EXIT_CODE:-unknown}'). Failing closed — a scan that did not run is not a clean scan."
+              exit 1
+              ;;
+          esac

@@ -28,6 +28,10 @@ jobs:
 | **[pr-checks.yml](.github/workflows/pr-checks.yml)** | PR handling | Branch validation, CODEOWNERS, Slack notifications |
 | **[go-check.yml](.github/workflows/go-check.yml)** | Go code quality | Tests, linting, coverage artifacts |
 | **[gitleaks.yml](.github/workflows/gitleaks.yml)** | Secret scanning (source) | Gitleaks CLI, PR diff / full scan, SARIF, job summary |
+| **[go-security.yml](.github/workflows/go-security.yml)** | **Security entrypoint for Go services** | CodeQL + Govulncheck + Dependency Review behind one stable `Security Gate` check |
+| **[codeql.yml](.github/workflows/codeql.yml)** | CodeQL analysis (one language per call) | `go` (autobuild/manual) or `actions` (none), `security-extended`, per-language SARIF category |
+| **[govulncheck.yml](.github/workflows/govulncheck.yml)** | Go dependency vulnerabilities | Reachability analysis, pinned tool version, real blocking gate, SARIF |
+| **[dependency-review.yml](.github/workflows/dependency-review.yml)** | PR dependency + license policy | Blocks new vulnerable dependencies, license audit split from the vuln gate |
 | **[docker-build-go.yml](.github/workflows/docker-build-go.yml)** | Docker build (Go) | **Scan-before-push**, multi-platform, caching, provenance, outputs `tags` + `digest` + `scan-status` |
 | **[docker-build-node.yml](.github/workflows/docker-build-node.yml)** | Docker build (Node) | **Scan-before-push**, multi-platform, caching, provenance, outputs `tags` + `digest` + `scan-status` |
 | **[trivy-scan.yml](.github/workflows/trivy-scan.yml)** | Image vulnerability report | Trivy post-push scan, SARIF, Google Sheets reporting |
@@ -57,6 +61,26 @@ jobs:
       lint: true
     secrets: inherit
 ```
+
+**Go Security Scanning (CodeQL + Govulncheck + Dependency Review):**
+```yaml
+jobs:
+  go-security:
+    uses: duynhlab/gha-workflows/.github/workflows/go-security.yml@main
+    with:
+      go-version-file: go.mod
+      govulncheck-enforce: true
+      dependency-review-severity: critical
+    # No `secrets: inherit` — this workflow needs no secrets.
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      security-events: write
+```
+
+Require the `go-security / Security Gate` check in the branch ruleset.
+See [docs/go-security.md](docs/go-security.md) for rollout, policy and exceptions, and [examples/](examples/) for full caller workflows.
 
 **Secret Scanning (PR block, push warn):**
 ```yaml
@@ -181,6 +205,8 @@ Add in repository: Settings > Secrets and variables > Actions
 ## Documentation
 
 - **[USAGE.md](USAGE.md)** - Complete workflow documentation with examples
+- **[docs/go-security.md](docs/go-security.md)** - Go security contract: architecture, policy matrix, ruleset settings, rollout phases, exception process
+- **[examples/](examples/)** - Copy-paste caller workflows for a Go service (`check` / `build` / scheduled security scan)
 - **[.github/workflows/](.github/workflows/)** - Workflow source files
 
 ---
