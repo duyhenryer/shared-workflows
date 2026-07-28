@@ -1,10 +1,12 @@
 # Go Security Contract
 
-How Go microservices get source and dependency scanning from this shared repository:
-architecture, policy, GitHub settings, rollout, and the exception process.
+How Go microservices get source and dependency scanning from this shared repository: the
+policy, the GitHub settings that enforce it, the rollout, and the exception process.
 
-Input/output tables live in [USAGE.md](../USAGE.md). Copy-paste caller workflows live in
-[examples/](../examples/).
+- Inputs and outputs — [workflows.md](workflows.md)
+- Pipeline diagrams — [architecture.md](architecture.md)
+- Secrets and prerequisites — [configuration.md](configuration.md)
+- Copy-paste caller workflows — [../examples/](../examples/)
 
 ## Why one shared aggregate instead of a `security.yml` per service
 
@@ -30,71 +32,17 @@ uses: duynhlab/gha-workflows/.github/workflows/go-security.yml@main
 Triggers (`pull_request`, `push`, `schedule`) stay in the service repository; the shared
 workflows are `workflow_call` only.
 
-## Architecture
+## How it runs
 
-### Pull request
+Diagrams for the pull request, push-to-main and scheduled flows are in
+[architecture.md](architecture.md) — that is the single place they are maintained. The
+behaviour that matters for policy:
 
-```mermaid
-flowchart TD
-    PR["Pull Request"] --> GOCHECK["go-check<br/>test / lint / integration"]
-    PR --> GITLEAKS["gitleaks<br/>secret scan"]
-    PR --> SEC
-
-    subgraph SEC ["go-security"]
-        CQGO["CodeQL (go)"]
-        CQACT["CodeQL (actions)<br/>optional"]
-        GOVULN["Govulncheck"]
-        DEPREV["Dependency Review"]
-        GATE["Security Gate"]
-        CQGO --> GATE
-        CQACT --> GATE
-        GOVULN --> GATE
-        DEPREV --> GATE
-    end
-
-    GOCHECK --> SONAR["SonarCloud"]
-    GITLEAKS --> SONAR
-
-    GATE --> RULESET["Ruleset:<br/>required checks +<br/>Code Scanning merge protection"]
-    SONAR --> RULESET
-    RULESET --> MERGE["Merge"]
-
-    style GATE fill:#3b82f6,color:#fff
-```
-
-Govulncheck and Dependency Review fail the workflow directly. CodeQL findings are blocked by
-Code Scanning merge protection, **not** by the job's exit status.
-
-### Push to main
-
-```mermaid
-flowchart TD
-    PUSH["Push main"] --> GOCHECK["go-check"]
-    PUSH --> GITLEAKS["gitleaks"]
-    PUSH --> SEC["go-security<br/>(Dependency Review self-skips)"]
-    GOCHECK --> SONAR["SonarCloud"]
-    GITLEAKS --> SONAR
-    SONAR --> BUILD["docker-build"]
-    SEC --> BUILD
-    BUILD --> TRIVY["Trivy image / SBOM / Cosign"]
-    TRIVY --> PROMOTE["Promote dev tag"]
-    PROMOTE --> FLUX["Flux auto deploy"]
-```
-
-`docker-build` waits for `go-security`, so a blocking Govulncheck finding prevents the image
-from being pushed and Flux never sees a deployable tag.
-
-### Weekly schedule
-
-```mermaid
-flowchart LR
-    CRON["weekly schedule<br/>+ workflow_dispatch"] --> SEC["go-security"]
-    SEC --> CQ["CodeQL (go)"]
-    SEC --> GV["Govulncheck"]
-    SEC -.->|"skipped: not a PR"| DR["Dependency Review"]
-    CQ --> TAB["Security tab"]
-    GV --> TAB
-```
+| Event | What runs | What blocks |
+|-------|-----------|-------------|
+| `pull_request` | CodeQL, Govulncheck, Dependency Review | Govulncheck and Dependency Review fail the workflow directly; CodeQL findings are blocked by Code Scanning merge protection, **not** by the job's exit status |
+| `push` to main | CodeQL, Govulncheck (Dependency Review self-skips) | `docker-build` waits for `go-security`, so a blocking finding prevents the image from being pushed and Flux never sees a deployable tag |
+| `schedule` | CodeQL, Govulncheck | Nothing — refreshes the alert baseline only |
 
 Keep the schedule in its own caller (`security-scheduled.yml`), never in `build.yml` — a
 scheduled run must not build or push images, and must not trigger Flux.

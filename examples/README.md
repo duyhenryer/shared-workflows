@@ -12,8 +12,27 @@ this repository.
 
 Before copying, replace: `project-key`, `organization`, `image-name`, and `slack_channel_id`.
 
-Contract and policy details: [../docs/go-security.md](../docs/go-security.md).
-Inputs and outputs: [../USAGE.md](../USAGE.md).
+- Inputs and outputs — [../docs/workflows.md](../docs/workflows.md)
+- Full pipeline diagrams — [../docs/architecture.md](../docs/architecture.md)
+- Policy, rollout and exceptions — [../docs/go-security.md](../docs/go-security.md)
+
+---
+
+## How the three files divide the work
+
+```mermaid
+flowchart LR
+    CHK["check.yml<br/>pull_request"] --> G1["Blocks the merge<br/>via required checks"]
+    BLD["build.yml<br/>push main / v* tag"] --> G2["Blocks the image<br/>no push → no deploy"]
+    SCH["security-scheduled.yml<br/>weekly"] --> G3["Refreshes the alert baseline<br/>builds nothing"]
+
+    style G1 fill:#3b82f6,color:#fff
+    style G2 fill:#3b82f6,color:#fff
+    style G3 fill:#6b7280,color:#fff
+```
+
+The schedule is a separate file on purpose: a scheduled run must never build or push an image,
+because that would let a deployment happen with nobody watching.
 
 ---
 
@@ -40,7 +59,7 @@ flowchart LR
     style GATE fill:#3b82f6,color:#fff
 ```
 
-Check names that appear on the PR (require the gate, not the individual scanners):
+Check names that appear on the PR — require the gate, not the individual scanners:
 
 ```text
 go-security / Security Gate
@@ -49,42 +68,7 @@ go-security / govulncheck / Govulncheck
 go-security / dependency-review / Dependency Review
 ```
 
----
-
-## After applying `check.yml` (pull request)
-
-```mermaid
-flowchart TD
-    PR["Pull Request"] --> PRC["pr-checks"]
-    PR --> GC["go-check<br/>test · lint"]
-    PR --> GL["gitleaks"]
-    PR --> SEC["go-security"]
-
-    GC --> SONAR["sonar"]
-    GL --> SONAR
-
-    SEC --> GATE["Security Gate"]
-
-    PRC --> NOTIFY["notify<br/>(never a required check)"]
-    GC --> NOTIFY
-    GL --> NOTIFY
-    SONAR --> NOTIFY
-    GATE --> NOTIFY
-
-    GATE --> RULES["Ruleset gate"]
-    SONAR --> RULES
-    GC --> RULES
-    GL --> RULES
-    RULES --> MERGE["Merge"]
-
-    style GATE fill:#3b82f6,color:#fff
-    style RULES fill:#f59e0b,color:#fff
-```
-
-`go-security` runs in parallel with everything else — it is intentionally **not** chained behind
-`sonar`, which would add its full duration to the PR critical path.
-
-The ruleset gate is what actually blocks the merge:
+The ruleset is what actually blocks the merge:
 
 | Required check | Source |
 |----------------|--------|
@@ -96,61 +80,25 @@ The ruleset gate is what actually blocks the merge:
 
 ---
 
-## After applying `build.yml` (push to main)
+## Notes on the examples
 
-```mermaid
-flowchart TD
-    PUSH["Push main / v* tag"] --> GC["go-check"]
-    PUSH --> GL["gitleaks"]
-    PUSH --> SEC["go-security<br/>dependency-review self-skips"]
+**`check.yml`** — `go-security` runs in parallel with `go-check` / `gitleaks` / `sonar`. It is
+intentionally **not** chained behind `sonar`, which would add its full duration to the PR
+critical path. `notify` includes `go-security` in its `needs`, but must never be a required
+check.
 
-    GC --> SONAR["sonar"]
-    GL --> SONAR
-
-    SONAR --> BUILD["docker-build<br/>--load → Trivy → push"]
-    SEC --> BUILD
-    GC --> BUILD
-    GL --> BUILD
-
-    BUILD -->|"scan pass"| SIGN["docker-sign<br/>Cosign keyless"]
-    BUILD -.->|"optional"| RPT["trivy-report<br/>SARIF + Sheets"]
-    SEC -.->|"Security Gate fail"| BLOCKED["Image NOT pushed<br/>→ Flux sees no new tag"]
-    BUILD -.->|"scan fail"| BLOCKED
-
-    SIGN --> PROMOTE["Promote deployable tag"]
-    PROMOTE --> FLUX["Flux auto deploy"]
-
-    style BLOCKED fill:#ef4444,color:#fff
-    style SEC fill:#3b82f6,color:#fff
-```
-
-`docker-build` and `release-binary` list their dependencies explicitly
-(`needs: [go-check, gitleaks, sonar, go-security]`) rather than inheriting `gitleaks` through the
-`sonar` edge, so the gate graph is auditable at a glance.
+**`build.yml`** — `docker-build` and `release-binary` list their dependencies explicitly
+(`needs: [go-check, gitleaks, sonar, go-security]`) rather than inheriting `gitleaks` through
+the `sonar` edge, so the gate graph is auditable at a glance. Dependency Review self-skips on a
+push, and the Security Gate accounts for that.
 
 > **Watch out:** a *skipped* `needs` dependency skips every downstream job. That is why the
 > build example does **not** exclude tags from `gitleaks` — doing so would silently turn a tag
 > build into a no-op.
 
----
-
-## After applying `security-scheduled.yml` (weekly)
-
-```mermaid
-flowchart LR
-    CRON["cron '17 2 * * 1'<br/>+ workflow_dispatch"] --> SEC["go-security"]
-    SEC --> CQ["CodeQL (go)"]
-    SEC --> GV["Govulncheck"]
-    SEC -.->|"skipped: not a PR"| DR["Dependency Review"]
-    CQ --> TAB["Security tab<br/>alert baseline refreshed"]
-    GV --> TAB
-    SEC -.-> NOBUILD["No image build<br/>No GHCR push<br/>No Flux deploy"]
-
-    style NOBUILD fill:#6b7280,color:#fff
-```
-
-The schedule lives in its own file, never in `build.yml`, precisely so a scheduled run cannot
-push an image or trigger a deployment.
+**`security-scheduled.yml`** — `permissions: {}` at the top level, granted back only on the job.
+Stagger the cron minute across repository groups (17 / 29 / 41); a daily `0 2 * * *` on dozens
+of services is a thundering herd on the runner pool.
 
 ---
 
