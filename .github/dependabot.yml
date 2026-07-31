@@ -1,7 +1,16 @@
 version: 2
 updates:
   - package-ecosystem: "github-actions"
-    directory: "/"
+    # "/" only covers .github/workflows plus a root-level action.yml — composite
+    # actions under .github/actions/* are NOT scanned by it. That blind spot is
+    # how slack-notification sat on slackapi v3.0.1 while pr-checks.yml was
+    # already bumped to v4.0.0. The glob closes the gap (verified empirically:
+    # with "/" alone Dependabot bumped a canary workflow but skipped an
+    # identical ref in a composite; adding the glob produced the composite PR
+    # within a minute).
+    directories:
+      - "/"
+      - "/.github/actions/*"
     schedule:
       interval: "daily"
       time: "06:00"
