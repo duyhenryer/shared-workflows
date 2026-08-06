@@ -78,8 +78,16 @@ jobs:
         with:
           method: chat.postMessage
           token: ${{ secrets.SLACK_BOT_TOKEN }}
+          # toJSON() around the whole assembled string, not raw interpolation.
+          # The PR title is user text: a single double quote in it used to close the
+          # JSON string early and fail this step with "Failed to parse contents of
+          # the provided payload" -- which surfaces as a red required check on a PR
+          # whose content is fine. format() builds the plain sentence, toJSON() emits
+          # it as a correctly escaped JSON string literal (quotes included, so this
+          # value must NOT be wrapped in quotes), which also covers backslashes and
+          # newlines.
           payload: |
             {
               "channel": "${{ inputs.slack_channel_id }}",
-              "text": "PULL_REQUEST <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}> ${{ github.event.action }} in <${{ github.event.repository.html_url}}|${{ github.repository }}> by ${{ github.event.pull_request.user.login }}${{ env.owners != '' && format(' cc {0}', env.owners) || '' }}"
+              "text": ${{ toJSON(format('PULL_REQUEST <{0}|{1}> {2} in <{3}|{4}> by {5}{6}', github.event.pull_request.html_url, github.event.pull_request.title, github.event.action, github.event.repository.html_url, github.repository, github.event.pull_request.user.login, env.owners != '' && format(' cc {0}', env.owners) || '')) }}
             }
