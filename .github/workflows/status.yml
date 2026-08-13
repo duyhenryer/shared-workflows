@@ -153,7 +153,11 @@ jobs:
 
   notify:
     runs-on: ${{ inputs.runs-on }}
-    if: ${{ always() }}
+    # always() so the notification fires on failure too — but never for
+    # dependabot-triggered runs, whose secrets store has no Slack token, so
+    # the job itself would be the only failure. A human re-running the
+    # workflow becomes the actor and gets the real secrets.
+    if: ${{ always() && github.actor != 'dependabot[bot]' }}
     needs:
       - workflow-status
     steps:

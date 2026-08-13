@@ -74,6 +74,11 @@ on:
 jobs:
   sonarcloud:
     name: SonarCloud Analysis
+    # Dependabot-triggered runs read the Dependabot secrets store, where
+    # SONAR_TOKEN does not exist, so analysis can never pass there. A version
+    # bump changes no analyzable code anyway. Skip for dependabot; a human
+    # re-run becomes the actor and gets the real secrets.
+    if: github.actor != 'dependabot[bot]'
     runs-on: ${{ inputs.runs-on }}
     permissions:
       contents: read
