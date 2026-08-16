@@ -7,7 +7,26 @@ Inputs, outputs, secrets and usage for every reusable workflow in this repositor
 - Security policy and rollout — [go-security.md](go-security.md)
 - Copy-paste caller workflows — [../examples/](../examples/)
 
-Every example below references `@main`, matching the convention used across this repository.
+Every example below references `@main` for readability. **Callers pin a commit
+SHA** — see [Referencing these workflows](#referencing-these-workflows).
+
+## Referencing these workflows
+
+Pin the SHA, with the branch as a trailing comment:
+
+```yaml
+uses: duynhlab/gha-workflows/.github/workflows/go-check.yml@e321897… # main
+```
+
+**This repository is deliberately not tagged.** The `v1.0.x` tags are history
+and no longer move. That is not a gap in the update path: for a reference pinned
+to a SHA that carries no tag, Dependabot resolves the update to the latest commit
+on the default branch, and the commit it proposes is itself untagged, so the
+arrangement sustains itself. Callers therefore track `main` while keeping the
+audit trail and immutability of a SHA pin.
+
+Cutting a tag would flip that back to tag-tracking — so do not add one unless
+the intent really is to freeze consumers on a release line.
 
 ## Contents
 
@@ -158,7 +177,7 @@ When tests produce a coverage profile (`coverage.out` / `coverage-integration.ou
 | `lint` | boolean | `false` | No | Enable linting (PR events only) |
 | `lint-path` | string | `".golangci.yml"` | No | Lint config file path |
 | `lint-timeout` | string | `"10m"` | No | Lint timeout duration |
-| `lint-version` | string | `"v2.12.2"` | No | golangci-lint version. Pin an older value to defer the cleanup a bump brings |
+| `lint-version` | string | `"v2.12.2"` | No | **Fallback** golangci-lint version — used only when the caller has no `tools/go.mod`. See [Pinning the linter](#pinning-the-linter) |
 | `test-stable` | boolean | `false` | No | Also test against stable Go version (non-blocking compatibility check) |
 | `integration` | boolean | `false` | No | Run integration tests (`go test -tags=integration`). Needs a Docker daemon for testcontainers; `ubuntu-latest` has one |
 | `integration-command` | string | *(see below)* | No | Command for the integration job. Must write `coverage-integration.out` |
@@ -177,7 +196,38 @@ go test -tags=integration -covermode=atomic -coverprofile=coverage-integration.o
 | `Test` | Always | The check to require in the ruleset |
 | `Integration Test` | `integration: true` | Sets `TESTCONTAINERS_RYUK_DISABLED=true` — the Ryuk reaper intermittently hangs on GitHub runners, and the runner is ephemeral anyway |
 | `Test (stable)` | `test-stable: true` | `continue-on-error` — compatibility signal only |
-| `Lint` | `lint: true` **and** event is `pull_request` | |
+| `Lint` | `lint: true` **and** event is `pull_request` | Does **not** run on `push`, so `main` is never linted — a PR merged with Lint red leaves those findings unreported |
+
+### Pinning the linter
+
+Pin golangci-lint in a **`tools/go.mod`** rather than through `lint-version`:
+
+```
+tools/go.mod   →   tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+```
+
+```bash
+# create it once
+mkdir tools && cd tools && go mod init <module>/tools
+go get -tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+
+# run it — same command locally and in CI
+go -C tools build -o .bin/golangci-lint github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+./.bin/golangci-lint run
+```
+
+`lint-version` is a plain string input, so **nothing updates it** — no Dependabot
+ecosystem reads a workflow input value. That is how the default sat on `v2.6.0`
+while every local install had moved on, and 63 findings never reached CI. A
+`tools/go.mod` is a real module: Dependabot's `gomod` ecosystem bumps it, per
+repository, in that repository's own PR.
+
+Keep the tool in its **own module**, not the service `go.mod` — golangci-lint
+pulls roughly 200 dependencies, and they have no business in the service's
+`go.sum` or its `govulncheck` results. Add `.bin/` to `.gitignore`.
+
+The Lint job prefers `tools/go.mod` when present and falls back to
+`lint-version` otherwise, so the migration is per repository with no flag day.
 
 ### Usage
 
