@@ -158,7 +158,7 @@ When tests produce a coverage profile (`coverage.out` / `coverage-integration.ou
 | `lint` | boolean | `false` | No | Enable linting (PR events only) |
 | `lint-path` | string | `".golangci.yml"` | No | Lint config file path |
 | `lint-timeout` | string | `"10m"` | No | Lint timeout duration |
-| `lint-version` | string | `"v2.6.0"` | No | golangci-lint version |
+| `lint-version` | string | `"v2.12.2"` | No | golangci-lint version. Pin an older value to defer the cleanup a bump brings |
 | `test-stable` | boolean | `false` | No | Also test against stable Go version (non-blocking compatibility check) |
 | `integration` | boolean | `false` | No | Run integration tests (`go test -tags=integration`). Needs a Docker daemon for testcontainers; `ubuntu-latest` has one |
 | `integration-command` | string | *(see below)* | No | Command for the integration job. Must write `coverage-integration.out` |
@@ -199,7 +199,7 @@ jobs:
     with:
       command-test: 'go test -race -coverprofile=coverage.out -covermode=atomic ./...'
       lint: true
-      lint-version: 'v2.6.0'
+      lint-version: 'v2.12.2'
       test-stable: true
       integration: true
     secrets: inherit
