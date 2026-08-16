@@ -46,7 +46,10 @@ on:
         required: false
         type: string
         default: "v2.12.2"
-        description: golangci-lint version (e.g. v2.12.2). Uses go install for act/Go version compatibility.
+        description: >-
+          Fallback golangci-lint version, used only when the caller has no
+          tools/go.mod. Prefer pinning the linter there so Dependabot keeps it
+          current and local matches CI. Uses go install for act/Go compatibility.
       test-stable:
         required: false
         type: boolean
@@ -193,8 +196,31 @@ jobs:
         run: |
           go mod download
 
+      # A repository that pins golangci-lint in tools/go.mod (Go 1.24 `tool`
+      # directive) gets that exact version, built from the same module a
+      # developer builds from locally. That is the only arrangement where CI and
+      # the workstation cannot drift: `lint-version` is a plain string input, so
+      # nothing updates it — which is how the default sat on v2.6.0 while every
+      # local install had moved on, and 63 findings never reached CI.
+      #
+      # Dependabot's gomod ecosystem does update tools/go.mod, per repository, in
+      # that repository's own PR. Repos without tools/go.mod keep the old path.
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ inputs.lint-version }}
+        run: |
+          if [ -f tools/go.mod ]; then
+            echo "::notice::golangci-lint pinned by tools/go.mod"
+            go -C tools build -o "$RUNNER_TEMP/golangci-lint" \
+              github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+          else
+            echo "::notice::golangci-lint from lint-version input (${{ inputs.lint-version }}) — consider pinning it in tools/go.mod"
+            GOBIN="$RUNNER_TEMP" go install \
+              github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ inputs.lint-version }}
+          fi
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       - name: Lint check
-        run: golangci-lint run --timeout="${{ inputs.lint-timeout }}" --config="${{ inputs.lint-path }}"
+        # Print the version first: a silent version drift between CI and the
+        # workstation is the failure this job is meant to make impossible.
+        run: |
+          golangci-lint --version
+          golangci-lint run --timeout="${{ inputs.lint-timeout }}" --config="${{ inputs.lint-path }}"
