@@ -45,8 +45,8 @@ on:
       lint-version:
         required: false
         type: string
-        default: "v2.6.0"
-        description: golangci-lint version (e.g. v2.6.0). Uses go install for act/Go version compatibility.
+        default: "v2.12.2"
+        description: golangci-lint version (e.g. v2.12.2). Uses go install for act/Go version compatibility.
       test-stable:
         required: false
         type: boolean
