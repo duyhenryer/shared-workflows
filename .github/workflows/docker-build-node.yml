@@ -6,6 +6,12 @@ name: Docker Build & Push (Node)
 # Security: When scan-before-push is enabled (default), the image is built locally
 # (--load), scanned with Trivy, and only pushed if no vulnerabilities are found.
 # This prevents vulnerable images from reaching the registry.
+#
+# Platforms: the pushed image is a multi-arch index by default. Consumers include
+# arm64 clusters (Kind on Apple Silicon), and an amd64-only index fails there at
+# pull time with containerd's "no match for platform in manifest". The pre-push
+# scan build stays single-platform — `load: true` cannot accept a multi-platform
+# result — so it exercises the runner's arch only.
 
 on:
   workflow_call:
@@ -33,7 +39,7 @@ on:
         description: 'Target platforms for build (e.g., linux/amd64,linux/arm64)'
         required: false
         type: string
-        default: 'linux/amd64'
+        default: 'linux/amd64,linux/arm64'
       build-args:
         description: 'List of build-time variables'
         required: false
