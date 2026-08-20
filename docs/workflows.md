@@ -501,7 +501,7 @@ jobs:
 | `dockerfile` | string | `"Dockerfile"` | No | Path to Dockerfile |
 | `context` | string | `"."` | No | Docker build context |
 | `push` | boolean | `false` | No | Push image to registry |
-| `platforms` | string | `"linux/amd64"` | No | Target platforms |
+| `platforms` | string | `"linux/amd64,linux/arm64"` | No | Target platforms of the pushed index |
 | `build-args` | string | `""` | No | Build-time variables |
 | `tags` | string | `""` | No | Custom tags (comma-separated); empty = default tagging |
 | `runs-on` | string | `"ubuntu-latest"` | No | Runner type |
@@ -568,7 +568,9 @@ jobs:
       actions: read
 ```
 
-> `--load` (used for local scanning) only supports single-platform builds. With the default `linux/amd64` this is fine. For multi-arch builds the amd64 image is scanned locally, and the multi-arch push only proceeds if that scan passes.
+> `--load` (used for local scanning) only supports single-platform builds, so the Trivy gate exercises the **runner's** architecture only — amd64 on `ubuntu-latest`. The default `platforms` is multi-arch, so the arm64 layers of the pushed index go out unscanned; the gate blocks the push on an amd64 finding, and an arm64-only regression would not be caught. Pass `platforms: linux/amd64` if you need the scanned artifact to be the whole pushed artifact.
+>
+> Cross-compile in the Dockerfile, or the arm64 leg runs the entire builder stage under QEMU: `FROM --platform=$BUILDPLATFORM …`, `ARG TARGETOS TARGETARCH`, then `GOARCH=${TARGETARCH} go build`. With it the arm64 leg costs under a minute; without it, minutes to tens of minutes.
 
 ---
 
