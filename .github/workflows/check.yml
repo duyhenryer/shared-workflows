@@ -1,0 +1,190 @@
+name: PR Gate
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: 'Image path below ghcr.io/<owner>/<repo>/'
+        required: true
+        type: string
+      sonar-project-key:
+        description: 'SonarCloud project key'
+        required: true
+        type: string
+      sonar-organization:
+        description: 'SonarCloud organization'
+        required: true
+        type: string
+      command-test:
+        description: 'Unit-test command; must write coverage.out'
+        required: false
+        type: string
+        default: 'go test -race -covermode=atomic -coverprofile=coverage.out ./...'
+      go-version-file:
+        required: false
+        type: string
+        default: 'go.mod'
+      cache-dependency-path:
+        required: false
+        type: string
+        default: 'go.sum'
+      dockerfile:
+        required: false
+        type: string
+        default: 'Dockerfile'
+      context:
+        required: false
+        type: string
+        default: '.'
+      build-args:
+        required: false
+        type: string
+        default: ''
+      runs-on:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      scan-actions:
+        description: 'Also scan GitHub Actions with CodeQL'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      SONAR_TOKEN:
+        description: 'SonarCloud token; unavailable Dependabot runs are skipped'
+        required: false
+
+jobs:
+  branch-policy:
+    name: Branch policy
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
+    steps:
+      - name: Validate dev/main flow
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          case "$BASE_REF" in
+            dev)
+              if [[ ! "$HEAD_REF" =~ ^(feature|feat|fix|bugfix|hotfix|release|chore|docs|refactor|test|ci|perf|style|build|dependabot|renovate|sync)/ ]]; then
+                echo "::error::PRs into dev require an approved branch prefix"
+                exit 1
+              fi
+              ;;
+            main)
+              if [[ "$HEAD_REF" != "dev" && ! "$HEAD_REF" =~ ^hotfix/ ]]; then
+                echo "::error::main accepts only dev promotion or hotfix/*"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::PR gate supports only dev and main"
+              exit 1
+              ;;
+          esac
+
+  quality:
+    needs: branch-policy
+    uses: ./.github/workflows/go-check.yml
+    with:
+      runs-on: ${{ inputs.runs-on }}
+      command-test: ${{ inputs.command-test }}
+      gomod-path: ${{ inputs.go-version-file }}
+      cache-dependency-path: ${{ inputs.cache-dependency-path }}
+      lint: true
+    permissions:
+      contents: read
+
+  security:
+    needs: branch-policy
+    uses: ./.github/workflows/go-security.yml
+    with:
+      runs-on: ${{ inputs.runs-on }}
+      go-version-file: ${{ inputs.go-version-file }}
+      scan-actions: ${{ inputs.scan-actions }}
+      govulncheck-enforce: true
+      dependency-review-severity: critical
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      security-events: write
+
+  secrets:
+    needs: branch-policy
+    uses: ./.github/workflows/gitleaks.yml
+    with:
+      runs-on: ${{ inputs.runs-on }}
+      scan-mode: auto
+    permissions:
+      contents: read
+      security-events: write
+
+  image:
+    needs: branch-policy
+    uses: ./.github/workflows/container-verify.yml
+    with:
+      image-name: ${{ inputs.image-name }}
+      dockerfile: ${{ inputs.dockerfile }}
+      context: ${{ inputs.context }}
+      build-args: ${{ inputs.build-args }}
+      runs-on: ${{ inputs.runs-on }}
+      scan-severity: CRITICAL
+      scan-ignore-unfixed: true
+    permissions:
+      actions: read
+      contents: read
+
+  sonar:
+    needs: quality
+    uses: ./.github/workflows/sonarqube.yml
+    with:
+      project-key: ${{ inputs.sonar-project-key }}
+      organization: ${{ inputs.sonar-organization }}
+      artifact-name: coverage-report
+      coverage-path: coverage.out
+      runs-on: ${{ inputs.runs-on }}
+      quality-gate-wait: true
+      fail-on-quality-gate: true
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    permissions:
+      contents: read
+      pull-requests: read
+
+  gate:
+    name: PR Gate
+    if: always()
+    needs: [branch-policy, quality, security, secrets, image, sonar]
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
+    steps:
+      - name: Evaluate required jobs
+        env:
+          BRANCH_POLICY: ${{ needs.branch-policy.result }}
+          QUALITY: ${{ needs.quality.result }}
+          SECURITY: ${{ needs.security.result }}
+          SECRETS: ${{ needs.secrets.result }}
+          IMAGE: ${{ needs.image.result }}
+          SONAR: ${{ needs.sonar.result }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          for result in "$BRANCH_POLICY" "$QUALITY" "$SECURITY" "$SECRETS" "$IMAGE"; do
+            if [ "$result" != "success" ]; then
+              echo "::error::A required PR job did not succeed"
+              exit 1
+            fi
+          done
+          if [ "$SONAR" != "success" ]; then
+            if [ "$ACTOR" = "dependabot[bot]" ] && [ "$SONAR" = "skipped" ]; then
+              echo "SonarCloud skipped for Dependabot; human approval remains required."
+            else
+              echo "::error::SonarCloud quality gate did not succeed"
+              exit 1
+            fi
+          fi

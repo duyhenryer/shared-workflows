@@ -105,11 +105,20 @@ jobs:
 
       - name: Coverage Report Summary
         if: success()
-        uses: duynhlab/gha-workflows/.github/actions/coverage-summary@main
-        with:
-          coverage-file: coverage.out
-          title: Unit Test Coverage
-          artifact-name: coverage-report
+        env:
+          COVERAGE_FILE: coverage.out
+        run: |
+          set -euo pipefail
+          total="$(go tool cover -func="$COVERAGE_FILE" | awk '/^total:/ { print $NF; exit }')"
+          {
+            echo "### Unit Test Coverage"
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| Total Coverage | **${total:-N/A}** |"
+            echo "| Report File | \`${COVERAGE_FILE}\` |"
+            echo "| Artifact | \`coverage-report\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   integration:
     name: Integration Test
@@ -147,11 +156,20 @@ jobs:
 
       - name: Coverage Report Summary
         if: success()
-        uses: duynhlab/gha-workflows/.github/actions/coverage-summary@main
-        with:
-          coverage-file: coverage-integration.out
-          title: Integration Test Coverage
-          artifact-name: coverage-integration-report
+        env:
+          COVERAGE_FILE: coverage-integration.out
+        run: |
+          set -euo pipefail
+          total="$(go tool cover -func="$COVERAGE_FILE" | awk '/^total:/ { print $NF; exit }')"
+          {
+            echo "### Integration Test Coverage"
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| Total Coverage | **${total:-N/A}** |"
+            echo "| Report File | \`${COVERAGE_FILE}\` |"
+            echo "| Artifact | \`coverage-integration-report\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   test-stable:
     name: Test (stable)
@@ -181,7 +199,7 @@ jobs:
     name: Lint
     timeout-minutes: 30
     runs-on: ${{ inputs.runs-on }}
-    if: github.event_name == 'pull_request' && inputs.lint
+    if: inputs.lint
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
