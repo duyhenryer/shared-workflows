@@ -47,38 +47,59 @@ runs:
     - name: Configure Git User
       shell: bash
       run: |
-        git config --global user.name 'github-actions[bot]'
-        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+        git config --local user.name 'github-actions[bot]'
+        git config --local user.email 'github-actions[bot]@users.noreply.github.com'
 
     - name: Create Sync Pull Request
       id: sync
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
+        SOURCE_BRANCH: ${{ inputs.source_branch }}
+        TARGET_BRANCH: ${{ inputs.target_branch }}
+        PR_TITLE_PREFIX: ${{ inputs.pr_title }}
+        PR_BODY: ${{ inputs.pr_body }}
+        PR_LABELS: ${{ inputs.pr_labels }}
+        AUTO_MERGE: ${{ inputs.auto_merge }}
+        MERGE_METHOD: ${{ inputs.merge_method }}
       run: |
-        SOURCE_BRANCH="${{ inputs.source_branch }}"
-        TARGET_BRANCH="${{ inputs.target_branch }}"
-        PR_TITLE="${{ inputs.pr_title }} (${SOURCE_BRANCH} -> ${TARGET_BRANCH})"
-        PR_BODY="${{ inputs.pr_body }}"
-        # Remove any spaces that user might have accidentally input in the comma separated list
-        PR_LABELS="$(echo "${{ inputs.pr_labels }}" | tr -d ' ')"
-        
-        echo "========================================="
-        echo "Syncing $SOURCE_BRANCH to $TARGET_BRANCH"
-        echo "========================================="
+        set -euo pipefail
 
-        # Authenticate git remote with the provided token
-        git remote set-url origin "https://x-access-token:${{ inputs.github_token }}@github.com/${{ github.repository }}.git"
+        git check-ref-format --branch "$SOURCE_BRANCH" >/dev/null
+        git check-ref-format --branch "$TARGET_BRANCH" >/dev/null
+        if [[ "$SOURCE_BRANCH" == "$TARGET_BRANCH" ]]; then
+          echo "source_branch and target_branch must be different" >&2
+          exit 1
+        fi
+
+        case "$AUTO_MERGE" in
+          true|false) ;;
+          *) echo "auto_merge must be true or false" >&2; exit 1 ;;
+        esac
+
+        case "$MERGE_METHOD" in
+          merge|squash|rebase) ;;
+          *) echo "merge_method must be merge, squash, or rebase" >&2; exit 1 ;;
+        esac
+
+        PR_TITLE="$PR_TITLE_PREFIX ($SOURCE_BRANCH -> $TARGET_BRANCH)"
+        GH_HOST="${GITHUB_SERVER_URL#https://}"
+
+        # Authenticate git without storing the token in the remote URL.
+        gh auth setup-git --hostname "$GH_HOST"
 
         # Fetch the latest history for both branches
-        git fetch origin $SOURCE_BRANCH
-        git fetch origin $TARGET_BRANCH
+        git fetch --no-tags origin \
+          "+refs/heads/$SOURCE_BRANCH:refs/remotes/origin/$SOURCE_BRANCH" \
+          "+refs/heads/$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH"
 
         # Check if source branch is ahead of target branch. 
         # If COUNT is 0, target branch already has all commits from source branch.
-        COUNT=$(git rev-list origin/$TARGET_BRANCH..origin/$SOURCE_BRANCH --count)
+        COUNT=$(git rev-list \
+          "origin/$TARGET_BRANCH..origin/$SOURCE_BRANCH" --count)
         if [ "$COUNT" -eq 0 ]; then
           echo "No missing commits from $SOURCE_BRANCH in $TARGET_BRANCH. Everything is up to date."
+          echo "pr_url=" >> "$GITHUB_OUTPUT"
           exit 0
         fi
 
@@ -90,33 +111,44 @@ runs:
         echo "Creating/updating sync branch: $SYNC_BRANCH"
         
         # Checkout the source branch into the sync branch
-        git checkout -B $SYNC_BRANCH origin/$SOURCE_BRANCH
+        git checkout -B "$SYNC_BRANCH" "origin/$SOURCE_BRANCH"
 
-        # Push the sync branch to remote, forcefully updating it if it already exists
-        git push -f origin $SYNC_BRANCH
+        # This branch is bot-owned. A lease prevents concurrent overwrites.
+        git push --force-with-lease origin \
+          "HEAD:refs/heads/$SYNC_BRANCH"
 
         # Check if a PR already exists for this branch pairing
         PR_EXISTS_URL=$(gh pr list -B "$TARGET_BRANCH" -H "$SYNC_BRANCH" --state open --json url --jq '.[0].url')
         PR_URL=""
 
         if [ -z "$PR_EXISTS_URL" ] || [ "$PR_EXISTS_URL" = "null" ]; then
+          LABEL_ARGS=()
+          IFS=',' read -ra LABEL_VALUES <<< "$PR_LABELS"
+          for label in "${LABEL_VALUES[@]}"; do
+            label="$(printf '%s' "$label" | sed \
+              -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            if [ -n "$label" ]; then
+              LABEL_ARGS+=(--label "$label")
+            fi
+          done
+
           echo "Creating new Pull Request..."
           PR_URL=$(gh pr create \
             --base "$TARGET_BRANCH" \
             --head "$SYNC_BRANCH" \
             --title "$PR_TITLE" \
             --body "$PR_BODY" \
-            --label "$PR_LABELS")
+            "${LABEL_ARGS[@]}")
           echo "Pull Request created successfully: $PR_URL"
         else
           echo "An open Pull Request already exists for $SYNC_BRANCH to $TARGET_BRANCH. Changes have been pushed to the branch."
           PR_URL="$PR_EXISTS_URL"
         fi
 
-        echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+        echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
 
-        if [ "${{ inputs.auto_merge }}" = "true" ] && [ -n "$PR_URL" ]; then
-          echo "Enabling auto-merge for $PR_URL with method ${{ inputs.merge_method }}..."
+        if [ "$AUTO_MERGE" = "true" ] && [ -n "$PR_URL" ]; then
+          echo "Enabling auto-merge for $PR_URL with method $MERGE_METHOD..."
           # Using --auto so it waits for passing status checks if any are required
-          gh pr merge "$PR_URL" --auto --${{ inputs.merge_method }} || echo "Auto-merge could not be enabled immediately (maybe no checks are required, or lack of permissions). You may need to review it manually."
+          gh pr merge "$PR_URL" --auto "--$MERGE_METHOD"
         fi
