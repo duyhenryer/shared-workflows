@@ -1,0 +1,28 @@
+# Copy to a Go service as .github/workflows/release.yml.
+# Resolve v2 and replace it with the immutable commit SHA before merging.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    uses: duynhlab/gha-workflows/.github/workflows/release.yml@v2
+    with:
+      image-name: my-service
+      publish-binaries: true
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+      packages: write
+      pull-requests: read
+      security-events: write

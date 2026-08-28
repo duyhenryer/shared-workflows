@@ -1,89 +1,28 @@
-# Copy to a Go service repo as .github/workflows/check.yml
-#
-# Pull-request pipeline: quality, secrets and security scanning run in parallel.
-# `go-security` deliberately does NOT sit behind sonar — chaining it would add its
-# duration to the PR critical path for no benefit.
-#
-# Required status checks to configure on main:
-#   go-check / Test
-#   gitleaks / Gitleaks Scan
-#   go-security / Security Gate
-#   SonarCloud Quality Gate (if enforced)
-#   + Code Scanning merge protection for CodeQL alerts (High or higher)
-
+# Copy to a Go service as .github/workflows/check.yml.
+# Resolve v2 and replace it with the immutable commit SHA before merging.
 name: Check
 
 on:
   pull_request:
-    branches: [main, dev]
+    branches: [dev, main]
+
+permissions: {}
 
 concurrency:
-  group: check-${{ github.ref }}
+  group: check-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  pr-checks:
-    uses: duynhlab/gha-workflows/.github/workflows/pr-checks.yml@main
+  check:
+    uses: duynhlab/gha-workflows/.github/workflows/check.yml@v2
     with:
-      slack_channel_id: "C0AD82A9A74"
+      image-name: my-service
+      sonar-project-key: my-org_my-service
+      sonar-organization: my-org
     secrets:
-      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-
-  go-check:
-    uses: duynhlab/gha-workflows/.github/workflows/go-check.yml@main
-    with:
-      command-test: 'go test -race -coverprofile=coverage.out -covermode=atomic ./...'
-      lint: true
-    secrets: inherit
-
-  gitleaks:
-    uses: duynhlab/gha-workflows/.github/workflows/gitleaks.yml@main
-    permissions:
-      contents: read
-      security-events: write
-
-  # CodeQL (go) + Govulncheck + Dependency Review behind one Security Gate.
-  go-security:
-    uses: duynhlab/gha-workflows/.github/workflows/go-security.yml@main
-    with:
-      go-version-file: go.mod
-      go-working-directory: .
-      # Set false while baselining a repo that still has findings, then flip to
-      # true once the reachable vulnerabilities are fixed.
-      govulncheck-enforce: true
-      dependency-review-severity: critical
-      # Leave scan-actions false in services: CodeQL cannot analyze the reusable
-      # workflows that live in gha-workflows from here anyway.
-      scan-actions: false
-      # Keep allowed-licenses empty until Legal approves a policy — an empty
-      # value skips the license check instead of enforcing someone else's list.
-      allowed-licenses: ''
-      license-enforce: false
-    # No `secrets: inherit` — the security scanners need no secrets.
-    # Permissions can only be kept or reduced down the call chain, so the caller
-    # must grant the maximum the nested jobs need.
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     permissions:
       actions: read
       contents: read
       pull-requests: read
       security-events: write
-
-  sonar:
-    needs: [go-check, gitleaks]
-    uses: duynhlab/gha-workflows/.github/workflows/sonarqube.yml@main
-    with:
-      project-key: my-org_my-service
-      organization: my-org
-    secrets:
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
-  # notify reports results — never make it a required status check.
-  notify:
-    needs: [pr-checks, go-check, gitleaks, go-security, sonar]
-    if: always() && github.actor != 'dependabot[bot]'
-    uses: duynhlab/gha-workflows/.github/workflows/status.yml@main
-    with:
-      slack_channel_id: "C0AD82A9A74"
-      slack_thread_ts: ${{ needs.pr-checks.outputs.slack_thread_ts }}
-    secrets:
-      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}

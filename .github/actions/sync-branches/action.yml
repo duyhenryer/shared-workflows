@@ -93,7 +93,7 @@ runs:
           "+refs/heads/$SOURCE_BRANCH:refs/remotes/origin/$SOURCE_BRANCH" \
           "+refs/heads/$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH"
 
-        # Check if source branch is ahead of target branch. 
+        # Check if source branch is ahead of target branch.
         # If COUNT is 0, target branch already has all commits from source branch.
         COUNT=$(git rev-list \
           "origin/$TARGET_BRANCH..origin/$SOURCE_BRANCH" --count)
@@ -109,7 +109,7 @@ runs:
         SYNC_BRANCH="sync/${SOURCE_BRANCH}-to-${TARGET_BRANCH}"
 
         echo "Creating/updating sync branch: $SYNC_BRANCH"
-        
+
         # Checkout the source branch into the sync branch
         git checkout -B "$SYNC_BRANCH" "origin/$SOURCE_BRANCH"
 

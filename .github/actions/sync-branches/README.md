@@ -16,7 +16,7 @@ sequenceDiagram
     participant Main as source_branch (main)
     participant Sync as sync_branch (sync/main-to-dev)
     participant Dev as target_branch (dev)
-    
+
     note over Main: Hotfix merged into main
     Main->>Sync: 1. Checkout new sync branch from main
     Sync->>Dev: 2. Calculate diff (git rev-list)
@@ -55,7 +55,7 @@ jobs:
           token: ${{ secrets.SYNC_BRANCH_TOKEN }}
 
       - name: Sync Main to Dev
-        uses: ./path-to-your-shared-repo/.github/actions/sync-branches
+        uses: duynhlab/gha-workflows/.github/actions/sync-branches@v2
         with:
           source_branch: 'main'
           target_branch: 'dev'

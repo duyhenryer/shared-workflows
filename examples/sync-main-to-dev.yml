@@ -1,0 +1,36 @@
+# Copy to a service as .github/workflows/sync-main-to-dev.yml.
+# SYNC_BRANCH_TOKEN is a GitHub App token or fine-grained PAT.
+name: Sync main to dev
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: sync-main-to-dev
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_BRANCH_TOKEN }}
+      - name: Open main to dev sync PR
+        uses: duynhlab/gha-workflows/.github/actions/sync-branches@v2
+        with:
+          source_branch: main
+          target_branch: dev
+          github_token: ${{ secrets.SYNC_BRANCH_TOKEN }}
+          pr_title: 'Sync main to dev'
+          pr_labels: 'auto-sync,backport'
+          auto_merge: 'true'
+          merge_method: merge
