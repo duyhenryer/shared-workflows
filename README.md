@@ -1,30 +1,61 @@
-# Shared GA - Reusable Workflows
+# duynhlab reusable workflows
 
-> Centralized reusable workflows for consistent CI/CD across all repositories
+Reusable GitHub Actions contracts for the duynhlab repositories. Version 2
+implements a two-branch delivery model: pull requests target `dev` or `main`,
+merges to `dev` create non-production images, and semantic tags from `main`
+create production releases.
 
-## Quick Start
+## Trust boundaries
 
-Reference any workflow with the `uses` keyword:
+| Boundary | Trigger | Result |
+|----------|---------|--------|
+| PR gate | PR into `dev` or `main` | Lint, tests, security analysis, SonarCloud, and a local image scan; nothing is published |
+| Dev artifact | Push to `dev` | Immutable `sha-*` image for dev/staging |
+| Production release | `vX.Y.Z` tag reachable from `main` | Versioned image and optional GoReleaser assets |
+
+Published images follow one identity-preserving path:
+
+```mermaid
+flowchart LR
+  BUILD["Build once"] --> QUARANTINE["Push unscanned-* tag"]
+  QUARANTINE --> SCAN{"Trivy CRITICAL gate<br/>exact registry digest"}
+  SCAN -->|fail| STOP["No deployable tag"]
+  SCAN -->|pass| PROMOTE["Promote the same digest"]
+  PROMOTE --> SIGN["Cosign signature"]
+  SIGN --> ATTEST["Provenance + SBOM attestations"]
+```
+
+## Public workflows
+
+| Workflow | Use |
+|----------|-----|
+| [`check.yml`](.github/workflows/check.yml) | Complete Go PR gate |
+| [`build.yml`](.github/workflows/build.yml) | Build and publish a `dev` image |
+| [`release.yml`](.github/workflows/release.yml) | Clean production release from a tag |
+| [`go-security.yml`](.github/workflows/go-security.yml) | Scheduled or standalone Go security scan |
+| [`tf-lint.yml`](.github/workflows/tf-lint.yml) | OpenTofu/Terraform validation |
+| [`status.yml`](.github/workflows/status.yml) | Optional status reporting |
+
+`container-verify.yml`, `container-publish.yml`, and the individual Go/security
+workflows are implementation primitives. Prefer the three public entrypoints.
+
+## Minimal caller
 
 ```yaml
 name: Check
-
 on:
   pull_request:
-    branches: [main, dev]
+    branches: [dev, main]
 
 jobs:
-  go-check:
-    uses: duynhlab/gha-workflows/.github/workflows/go-check.yml@main
+  check:
+    uses: duynhlab/gha-workflows/.github/workflows/check.yml@v2
     with:
-      command-test: 'go test ./...'
-      lint: true
-    secrets: inherit
-
-  go-security:
-    uses: duynhlab/gha-workflows/.github/workflows/go-security.yml@main
-    with:
-      go-version-file: go.mod
+      image-name: checkout-service
+      sonar-project-key: duynhlab_checkout-service
+      sonar-organization: duynhlab
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     permissions:
       actions: read
       contents: read
@@ -32,50 +63,14 @@ jobs:
       security-events: write
 ```
 
-Complete caller workflows for a Go service: **[examples/](examples/)**.
-
-## Available Workflows
-
-| Workflow | Purpose | Features |
-|----------|---------|----------|
-| **[pr-checks.yml](.github/workflows/pr-checks.yml)** | PR handling | Branch validation, CODEOWNERS, Slack notifications |
-| **[go-check.yml](.github/workflows/go-check.yml)** | Go code quality | Unit + integration tests, linting, coverage summaries |
-| **[gitleaks.yml](.github/workflows/gitleaks.yml)** | Secret scanning (source) | Gitleaks CLI, PR diff / full scan, SARIF, job summary |
-| **[go-security.yml](.github/workflows/go-security.yml)** | **Security entrypoint for Go services** | CodeQL + Govulncheck + Dependency Review behind one stable `Security Gate` check |
-| **[codeql.yml](.github/workflows/codeql.yml)** | CodeQL analysis (one language per call) | `go` (autobuild/manual) or `actions` (none), `security-extended`, per-language SARIF category |
-| **[govulncheck.yml](.github/workflows/govulncheck.yml)** | Go dependency vulnerabilities | Reachability analysis, pinned tool version, real blocking gate, SARIF |
-| **[dependency-review.yml](.github/workflows/dependency-review.yml)** | PR dependency + license policy | Blocks new vulnerable dependencies, license audit split from the vuln gate |
-| **[docker-build-go.yml](.github/workflows/docker-build-go.yml)** | Docker build (Go) | **Scan-before-push**, immutable tags, multi-platform, caching, provenance |
-| **[docker-build-node.yml](.github/workflows/docker-build-node.yml)** | Docker build (Node) | **Scan-before-push**, same contract as the Go builder, also publishes `:latest` |
-| **[trivy-scan.yml](.github/workflows/trivy-scan.yml)** | Image vulnerability report | Trivy post-push scan, SARIF, Google Sheets reporting |
-| **[docker-sign.yml](.github/workflows/docker-sign.yml)** | Cosign image signing | Keyless OIDC signing |
-| **[goreleaser.yml](.github/workflows/goreleaser.yml)** | Go binary release (on `v*` tags) | Archives, `checksums.txt`, cosign signature, syft SBOMs |
-| **[sonarqube.yml](.github/workflows/sonarqube.yml)** | SonarCloud analysis | Go coverage (unit + integration), Quality Gate |
-| **[tf-lint.yml](.github/workflows/tf-lint.yml)** | Terraform validation | Format check, TFLint analysis |
-| **[status.yml](.github/workflows/status.yml)** | Build notifications | Slack, Google Sheets, job summaries |
-
-> **Pipeline pattern:** the builder workflows scan with Trivy **before** pushing, so an image only
-> reaches GHCR if it passes. `trivy-scan.yml` remains available for optional post-push SARIF
-> reporting.
+Production repositories should resolve `v2` and pin its immutable commit SHA.
+See [`examples/`](examples/) for complete PR, dev, release, and branch-sync
+callers.
 
 ## Documentation
 
-| Document | What's in it |
-|----------|--------------|
-| **[docs/workflows.md](docs/workflows.md)** | Reference — inputs, outputs, secrets, usage for every workflow |
-| **[docs/actions.md](docs/actions.md)** | Composite actions used internally |
-| **[docs/architecture.md](docs/architecture.md)** | Pipeline diagrams: PR, push to main, scheduled scan |
-| **[docs/go-security.md](docs/go-security.md)** | Security contract: policy matrix, rulesets, rollout, exceptions |
-| **[docs/configuration.md](docs/configuration.md)** | Required secrets, prerequisites, CODEOWNERS |
-| **[docs/troubleshooting.md](docs/troubleshooting.md)** | Common failures and fixes |
-| **[examples/](examples/)** | Copy-paste caller workflows for a Go service |
-
-Start at **[docs/](docs/)** for the full index.
-
-## Required Secrets
-
-`SLACK_BOT_TOKEN` and `SONAR_TOKEN` are required by the workflows that use them;
-`GSHEET_CLIENT_EMAIL` / `GSHEET_PRIVATE_KEY` are optional for Google Sheets reporting. The
-security workflows need **no secrets at all**.
-
-Full table and setup steps: [docs/configuration.md](docs/configuration.md#required-secrets).
+- [Architecture](docs/architecture.md)
+- [Workflow contract](docs/workflows.md)
+- [Repository configuration](docs/configuration.md)
+- [Go security policy](docs/go-security.md)
+- [Troubleshooting](docs/troubleshooting.md)

@@ -1,0 +1,88 @@
+name: Dev Artifact
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        required: true
+        type: string
+      command-test:
+        required: false
+        type: string
+        default: 'go test -race -covermode=atomic -coverprofile=coverage.out ./...'
+      go-version-file:
+        required: false
+        type: string
+        default: 'go.mod'
+      cache-dependency-path:
+        required: false
+        type: string
+        default: 'go.sum'
+      dockerfile:
+        required: false
+        type: string
+        default: 'Dockerfile'
+      context:
+        required: false
+        type: string
+        default: '.'
+      platforms:
+        required: false
+        type: string
+        default: 'linux/amd64,linux/arm64'
+      build-args:
+        required: false
+        type: string
+        default: ''
+      runs-on:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+    outputs:
+      image-ref:
+        value: ${{ jobs.image.outputs.image-ref }}
+      digest:
+        value: ${{ jobs.image.outputs.digest }}
+
+jobs:
+  guard:
+    name: Dev branch guard
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
+    steps:
+      - name: Require dev push
+        run: test "$GITHUB_REF" = 'refs/heads/dev'
+
+  quality:
+    needs: guard
+    uses: ./.github/workflows/go-check.yml
+    with:
+      runs-on: ${{ inputs.runs-on }}
+      command-test: ${{ inputs.command-test }}
+      gomod-path: ${{ inputs.go-version-file }}
+      cache-dependency-path: ${{ inputs.cache-dependency-path }}
+      lint: true
+    permissions:
+      contents: read
+
+  image:
+    needs: [guard, quality]
+    uses: ./.github/workflows/container-publish.yml
+    with:
+      channel: dev
+      image-name: ${{ inputs.image-name }}
+      dockerfile: ${{ inputs.dockerfile }}
+      context: ${{ inputs.context }}
+      platforms: ${{ inputs.platforms }}
+      build-args: ${{ inputs.build-args }}
+      runs-on: ${{ inputs.runs-on }}
+      scan-severity: CRITICAL
+      scan-ignore-unfixed: true
+      use-cache: true
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write

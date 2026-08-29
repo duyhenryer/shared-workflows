@@ -1,133 +1,86 @@
 # Troubleshooting
 
-Common failures when calling these workflows, and what to do about them.
+## PR branch policy fails
 
-## "SLACK_BOT_TOKEN not found"
+- PRs into `dev` need an approved prefix such as `feature/`, `fix/`, `hotfix/`,
+  `docs/`, `ci/`, `dependabot/`, `renovate/`, or `sync/`.
+- PRs into `main` must come from `dev` or `hotfix/*`.
 
-Add the secret in the calling repository: Settings → Secrets and variables → Actions → New
-repository secret, named `SLACK_BOT_TOKEN`. See [configuration.md](configuration.md#required-secrets).
+## SonarCloud fails or cannot find coverage
 
-## "Branch validation failed"
+`check.yml` waits for `go-check.yml`, downloads the `coverage-report` artifact,
+and expects `coverage.out`. A custom `command-test` must write that file.
 
-`pr-checks.yml` enforces gitflow-style prefixes. Use `hotfix/critical-bug`, `release/v1.2.3`,
-`fix/something` — not a bare `fix-something`.
+Do not set `fail-on-quality-gate: false` in a service caller. Fix the new-code
+gate or the SonarCloud project configuration. Dependabot is the only documented
+secret-related skip.
 
-## "CODEOWNERS not found" or Slack shows no owners
+## Trivy blocks publication
 
-Create a CODEOWNERS file with a global owners line (`* @user1 @user2`). The workflow looks in
-`.github/CODEOWNERS`, then `CODEOWNERS` (root), then `docs/CODEOWNERS`. See
-[configuration.md#codeowners](configuration.md#codeowners).
+The default gate blocks fixable CRITICAL findings and ignores vulnerabilities
+without an available fix. Fix or update the affected package/base image.
 
-## "Lint timeout exceeded"
+An exception uses a narrowly scoped `.trivyignore` with an owner and expiry.
+There is no public switch in `build.yml` or `release.yml` that disables the
+scan.
 
-```yaml
-with:
-  lint-timeout: '20m'   # default is 10m
-```
+When a publish scan fails, the `unscanned-*` tag remains for investigation but
+the `sha-*` or version tag must not exist.
 
-## "TFLint config not found"
+## Promoted digest differs
 
-Either create a `.tflint.hcl`, or point at yours:
+`container-publish.yml` fails after promotion if `crane digest` does not match
+the Buildx digest. Do not retry signing manually. Inspect the registry tag and
+rerun the entire workflow after the registry issue is resolved.
 
-```yaml
-with:
-  tflint_config_path: 'terraform/.tflint.hcl'
-```
+## Signing or attestation fails
 
-## "SonarCloud Quality Gate failed"
-
-Fix what SonarCloud reports, or temporarily stop the gate from failing the job:
-
-```yaml
-with:
-  fail-on-quality-gate: false
-```
-
-If the failure is coverage on code that is not meaningfully testable (bootstrap, wiring,
-migrations, mocks), the right fix is usually `coverage-exclusions`, not disabling the gate.
-
-## Trivy is blocking the image push
-
-The push is gated by **`scan-block-severity`**, not by `scan-exit-code`. `scan-exit-code` is
-deprecated and no longer affects the gate — setting it to `'0'` will not unblock anything.
-
-By default `CRITICAL,HIGH` are reported and only `CRITICAL` blocks. Options, in order of
-preference:
-
-**1. Suppress a specific known upstream CVE** — keeps the gate intact:
+Confirm the caller grants:
 
 ```yaml
-with:
-  scan-trivyignores: '.trivyignore'   # path relative to the build context
+permissions:
+  attestations: write
+  id-token: write
+  packages: write
 ```
 
-**2. Narrow what blocks** (already the default; use this if you had widened it):
+Also confirm the repository is eligible for GitHub artifact attestations under
+its GitHub plan and visibility. A failure after promotion leaves an unsigned
+tag; admission enforcement must reject it until a full rerun succeeds.
 
-```yaml
-with:
-  scan-severity: 'CRITICAL,HIGH'    # reported in the summary
-  scan-block-severity: 'CRITICAL'   # only these block the push
-```
+## Release tag is rejected
 
-**3. Turn the scan off entirely** — last resort:
+The tag must exactly match `vX.Y.Z`, and its commit must be reachable from
+`origin/main`. Delete and recreate a mistaken unpublished tag locally; do not
+move a tag that consumers may already have observed.
 
-```yaml
-with:
-  scan-before-push: false
-```
+## Sync PR does not run checks
 
-## Govulncheck fails every PR
+PRs created with `GITHUB_TOKEN` can require maintainer approval before their
+workflows run. Use a GitHub App installation token or fine-grained PAT as
+`SYNC_BRANCH_TOKEN` for unattended required checks.
 
-Expected on a repository that has never been scanned. Baseline it first:
+If the action cannot enable requested auto-merge, the job fails deliberately.
+Check token permissions, repository auto-merge settings, and branch rules.
 
-```yaml
-with:
-  govulncheck-enforce: false   # report-only
-```
+## Govulncheck behavior
 
-Fix the reachable findings, then set it back to `true`. Note that govulncheck has no stable
-per-finding ignore mechanism, so `enforce: false` is the only escape hatch — give it an expiry
-date and a ticket. See [go-security.md](go-security.md#exception-process).
+Exit code `3` means a reachable vulnerability. Other non-zero codes mean the
+tool or build failed and always fail closed. Scheduled baselining may set
+`govulncheck-enforce: false` temporarily, with an owner and expiry; PR and
+release entrypoints enforce findings.
 
-## Govulncheck fails even with `enforce: false`
+## Required check unexpectedly skips
 
-That is by design for **tool and build errors**. Exit code `3` means "vulnerabilities found"
-and respects `enforce`; any other non-zero exit means govulncheck could not complete (usually a
-build failure in the scanned module), and that always fails the job — a scan that did not run is
-not a clean scan. Check the job log for the compile error.
+A skipped `needs` dependency skips downstream jobs. The public entrypoints use
+final aggregate gates to make this visible. Require `PR Gate / PR Gate`, not an
+internal scanner job name that can change between v2 releases. With the supplied
+caller template, the aggregate check is `check / PR Gate`.
 
-## Security Gate fails but every scanner looks green
+## References
 
-The gate also rejects `cancelled` results, and it requires `dependency-review` to have actually
-run on a pull request. If `dependency-review` shows as `skipped` on a PR, the usual cause is a
-missing prerequisite — Dependency Graph disabled, or GitHub Code Security not enabled on a
-private repository. See [configuration.md](configuration.md#security-prerequisites).
-
-## CodeQL job is green but alerts still exist
-
-That is expected. A green CodeQL job means the analysis ran, not that the repository is clean.
-Alert severity is enforced by a **Code Scanning merge protection** rule in the branch ruleset,
-not by the job status. See [go-security.md](go-security.md#branch-ruleset-for-main).
-
-## A downstream job was skipped for no obvious reason
-
-A **skipped** `needs` dependency skips everything downstream. If you add an `if:` guard to a job
-that others depend on — for example excluding tags from `gitleaks` — the whole chain below it
-silently disappears instead of failing. Either drop the guard or add `if: always()` plus an
-explicit result check on the dependent job.
-
-## Additional resources
-
-- [GitHub Actions documentation](https://docs.github.com/en/actions)
-- [Reusing workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
-- [CodeQL code scanning](https://docs.github.com/en/code-security/code-scanning)
-- [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck)
-- [TFLint](https://github.com/terraform-linters/tflint)
-- [SonarCloud](https://docs.sonarsource.com/sonarcloud/)
-- [Cosign](https://docs.sigstore.dev/cosign/overview/)
+- [GitHub reusable workflows](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows)
+- [GitHub artifact attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations)
+- [Cosign](https://docs.sigstore.dev/cosign/)
 - [Trivy](https://trivy.dev/latest/docs/)
-- [Slack API](https://api.slack.com/)
-
----
-
-**Need help?** [Open an issue](https://github.com/duynhlab/gha-workflows/issues)
+- [SonarCloud Quality Gates](https://docs.sonarsource.com/sonarqube-cloud/standards/quality-gates/)

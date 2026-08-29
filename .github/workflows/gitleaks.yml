@@ -56,13 +56,84 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install Gitleaks
+        env:
+          VERSION: ${{ inputs.gitleaks-version }}
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64) arch=x64 ;;
+            aarch64|arm64) arch=arm64 ;;
+            *) echo "::error::unsupported architecture"; exit 1 ;;
+          esac
+          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          archive="gitleaks_${VERSION}_${os}_${arch}.tar.gz"
+          base_url="https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}"
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/checksums.txt" \
+            "$base_url/gitleaks_${VERSION}_checksums.txt"
+          expected="$(awk -v file="$archive" '$2 == file { print $1 }' "$RUNNER_TEMP/checksums.txt")"
+          actual="$(shasum -a 256 "$RUNNER_TEMP/$archive" | awk '{ print $1 }')"
+          if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+            echo "::error::Gitleaks archive checksum verification failed"
+            exit 1
+          fi
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+          chmod +x "$RUNNER_TEMP/gitleaks"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
       - name: Run Gitleaks
         id: gitleaks
-        uses: duynhlab/gha-workflows/.github/actions/gitleaks@main
-        with:
-          version: ${{ inputs.gitleaks-version }}
-          config-path: ${{ inputs.config-path }}
-          scan-mode: ${{ inputs.scan-mode }}
+        env:
+          CONFIG_PATH: ${{ inputs.config-path }}
+          SCAN_MODE: ${{ inputs.scan-mode }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITLEAKS_VERSION: ${{ inputs.gitleaks-version }}
+        run: |
+          set -euo pipefail
+          sarif_path="gitleaks-results.sarif"
+          mode="$SCAN_MODE"
+          if [ "$mode" = auto ]; then
+            if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+              mode='diff'
+            else
+              mode='full'
+            fi
+          fi
+          if [[ "$mode" != diff && "$mode" != full ]]; then
+            echo "::error::scan-mode must be auto, diff, or full"
+            exit 1
+          fi
+
+          args=(git --report-format sarif --report-path "$sarif_path" --exit-code 1 --no-banner --verbose)
+          if [ -n "$CONFIG_PATH" ]; then
+            args+=(--config "$CONFIG_PATH")
+          fi
+          if [ "$mode" = diff ] && [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ]; then
+            args+=(--log-opts="${BASE_SHA}..${HEAD_SHA}")
+          fi
+
+          scan_exit=0
+          gitleaks "${args[@]}" || scan_exit=$?
+          findings="$(jq '[.runs[]?.results[]?] | length' "$sarif_path" 2>/dev/null || echo 0)"
+          {
+            echo "exit-code=${scan_exit}"
+            echo "sarif=${sarif_path}"
+            echo "summary=${findings}"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Gitleaks Secret Scan"
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| Findings | **${findings}** |"
+            echo "| Scan Mode | \`${mode}\` |"
+            echo "| Version | \`${GITLEAKS_VERSION}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$scan_exit"
 
       - name: Upload SARIF to GitHub Security tab
         if: always()

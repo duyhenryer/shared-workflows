@@ -1,0 +1,101 @@
+name: Container Verify
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: 'Image path below ghcr.io/<owner>/<repo>/'
+        required: true
+        type: string
+      dockerfile:
+        required: false
+        type: string
+        default: 'Dockerfile'
+      context:
+        required: false
+        type: string
+        default: '.'
+      build-args:
+        description: 'Newline-separated Docker build arguments; never pass secrets here'
+        required: false
+        type: string
+        default: ''
+      runs-on:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      scan-severity:
+        required: false
+        type: string
+        default: 'CRITICAL'
+      scan-ignore-unfixed:
+        required: false
+        type: boolean
+        default: true
+      trivyignores:
+        required: false
+        type: string
+        default: ''
+    outputs:
+      scan-status:
+        value: ${{ jobs.verify.outputs.scan-status }}
+
+jobs:
+  verify:
+    name: Build and scan without publishing
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      scan-status: ${{ steps.scan-result.outputs.status }}
+    steps:
+      - name: Validate image name
+        id: refs
+        env:
+          IMAGE_NAME: ${{ inputs.image-name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$IMAGE_NAME" =~ ^[a-z0-9]+([._-][a-z0-9]+)*(\/[a-z0-9]+([._-][a-z0-9]+)*)*$ ]]; then
+            echo "::error::image-name must be a lowercase OCI repository path"
+            exit 1
+          fi
+          echo "local-ref=ghcr.io/${GITHUB_REPOSITORY}/${IMAGE_NAME}:pr-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Build PR image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          load: true
+          platforms: linux/amd64
+          push: false
+          tags: ${{ steps.refs.outputs.local-ref }}
+          build-args: ${{ inputs.build-args }}
+          provenance: false
+          sbom: false
+
+      - name: Scan PR image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.refs.outputs.local-ref }}
+          format: table
+          severity: ${{ inputs.scan-severity }}
+          exit-code: '1'
+          ignore-unfixed: ${{ inputs.scan-ignore-unfixed }}
+          trivyignores: ${{ inputs.trivyignores }}
+          scanners: vuln
+
+      - name: Record passing scan
+        id: scan-result
+        run: echo "status=pass" >> "$GITHUB_OUTPUT"

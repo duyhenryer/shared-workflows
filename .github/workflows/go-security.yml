@@ -1,7 +1,7 @@
 name: Go Security
 
 # Aggregate reusable workflow: the single security entrypoint for Go services.
-# Call it from check.yml (PR), build.yml (push main) and security-scheduled.yml
+# Call it from check.yml (PR), release.yml (tag) and security-scheduled.yml
 # (weekly) instead of wiring each scanner into every service repo.
 #
 #   codeql-go          always      source scanning (Go)

@@ -1,0 +1,178 @@
+name: Production Release
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        required: true
+        type: string
+      command-test:
+        required: false
+        type: string
+        default: 'go test -race -covermode=atomic -coverprofile=coverage.out ./...'
+      go-version-file:
+        required: false
+        type: string
+        default: 'go.mod'
+      cache-dependency-path:
+        required: false
+        type: string
+        default: 'go.sum'
+      go-version:
+        required: false
+        type: string
+        default: '1.26'
+      dockerfile:
+        required: false
+        type: string
+        default: 'Dockerfile'
+      context:
+        required: false
+        type: string
+        default: '.'
+      platforms:
+        required: false
+        type: string
+        default: 'linux/amd64,linux/arm64'
+      build-args:
+        required: false
+        type: string
+        default: ''
+      publish-binaries:
+        description: 'Run GoReleaser after the image gate passes'
+        required: false
+        type: boolean
+        default: true
+      runs-on:
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      scan-actions:
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      image-ref:
+        value: ${{ jobs.image.outputs.image-ref }}
+      digest:
+        value: ${{ jobs.image.outputs.digest }}
+
+jobs:
+  guard:
+    name: Release source guard
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Require vX.Y.Z tag from main
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release requires a vX.Y.Z tag"
+            exit 1
+          fi
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tagged commit is not reachable from main"
+            exit 1
+          fi
+
+  quality:
+    needs: guard
+    uses: ./.github/workflows/go-check.yml
+    with:
+      runs-on: ${{ inputs.runs-on }}
+      command-test: ${{ inputs.command-test }}
+      gomod-path: ${{ inputs.go-version-file }}
+      cache-dependency-path: ${{ inputs.cache-dependency-path }}
+      lint: true
+    permissions:
+      contents: read
+
+  security:
+    needs: guard
+    uses: ./.github/workflows/go-security.yml
+    with:
+      runs-on: ${{ inputs.runs-on }}
+      go-version-file: ${{ inputs.go-version-file }}
+      scan-actions: ${{ inputs.scan-actions }}
+      govulncheck-enforce: true
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      security-events: write
+
+  secrets:
+    needs: guard
+    uses: ./.github/workflows/gitleaks.yml
+    with:
+      runs-on: ${{ inputs.runs-on }}
+      scan-mode: full
+    permissions:
+      contents: read
+      security-events: write
+
+  image:
+    needs: [guard, quality, security, secrets]
+    uses: ./.github/workflows/container-publish.yml
+    with:
+      channel: release
+      image-name: ${{ inputs.image-name }}
+      dockerfile: ${{ inputs.dockerfile }}
+      context: ${{ inputs.context }}
+      platforms: ${{ inputs.platforms }}
+      build-args: ${{ inputs.build-args }}
+      runs-on: ${{ inputs.runs-on }}
+      scan-severity: CRITICAL
+      scan-ignore-unfixed: true
+      use-cache: false
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+
+  binaries:
+    if: inputs.publish-binaries
+    needs: image
+    uses: ./.github/workflows/goreleaser.yml
+    with:
+      go-version: ${{ inputs.go-version }}
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+
+  gate:
+    name: Release Gate
+    if: always()
+    needs: [guard, quality, security, secrets, image, binaries]
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
+    steps:
+      - name: Evaluate release
+        env:
+          GUARD: ${{ needs.guard.result }}
+          QUALITY: ${{ needs.quality.result }}
+          SECURITY: ${{ needs.security.result }}
+          SECRETS: ${{ needs.secrets.result }}
+          IMAGE: ${{ needs.image.result }}
+          BINARIES: ${{ needs.binaries.result }}
+          PUBLISH_BINARIES: ${{ inputs.publish-binaries }}
+        run: |
+          set -euo pipefail
+          for result in "$GUARD" "$QUALITY" "$SECURITY" "$SECRETS" "$IMAGE"; do
+            test "$result" = success || exit 1
+          done
+          if [ "$PUBLISH_BINARIES" = true ]; then
+            test "$BINARIES" = success || exit 1
+          else
+            test "$BINARIES" = skipped || exit 1
+          fi

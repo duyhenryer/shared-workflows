@@ -26,7 +26,7 @@ fan-out of N pull requests, and the policies drift. Instead there are two layers
 A service calls only the aggregate:
 
 ```yaml
-uses: duynhlab/gha-workflows/.github/workflows/go-security.yml@main
+uses: duynhlab/gha-workflows/.github/workflows/go-security.yml@v2
 ```
 
 Triggers (`pull_request`, `push`, `schedule`) stay in the service repository; the shared
@@ -34,14 +34,14 @@ workflows are `workflow_call` only.
 
 ## How it runs
 
-Diagrams for the pull request, push-to-main and scheduled flows are in
+Diagrams for the pull request, release, and scheduled flows are in
 [architecture.md](architecture.md) — that is the single place they are maintained. The
 behaviour that matters for policy:
 
 | Event | What runs | What blocks |
 |-------|-----------|-------------|
 | `pull_request` | CodeQL, Govulncheck, Dependency Review | Govulncheck and Dependency Review fail the workflow directly; CodeQL findings are blocked by Code Scanning merge protection, **not** by the job's exit status |
-| `push` to main | CodeQL, Govulncheck (Dependency Review self-skips) | `docker-build` waits for `go-security`, so a blocking finding prevents the image from being pushed and Flux never sees a deployable tag |
+| release tag | CodeQL, Govulncheck (Dependency Review self-skips) | `release.yml` waits for `go-security`, so a blocking finding prevents production publication |
 | `schedule` | CodeQL, Govulncheck | Nothing — refreshes the alert baseline only |
 
 Keep the schedule in its own caller (`security-scheduled.yml`), never in `build.yml` — a
@@ -49,7 +49,7 @@ scheduled run must not build or push images, and must not trigger Flux.
 
 ## Policy matrix
 
-| Tool | PR | Push main | Weekly | Blocking |
+| Tool | PR | Release | Weekly | Blocking |
 |------|----|-----------|--------|----------|
 | Gitleaks | Yes | Yes | Optional | Yes |
 | CodeQL Go | Yes | Yes | Yes | Via merge protection |
@@ -57,8 +57,8 @@ scheduled run must not build or push images, and must not trigger Flux.
 | Govulncheck | Yes | Yes | Yes | Yes, after the baseline is clean |
 | Dependency Review (vulns) | Yes | No | No | Critical, then tighten to High |
 | Dependency Review (licenses) | Yes | No | No | Report, enforce after Legal approval |
-| Trivy final image | No | Yes | Existing image | Yes, per image policy |
-| Cosign | No | Yes | No | Must precede promotion |
+| Trivy image | Local build | Exact registry digest | Existing image | Fixable Critical by default |
+| Cosign | No | Exact digest | No | After scan and promotion |
 
 These layers complement each other; none replaces another. Trivy sees the final OS packages
 and app dependencies inside the built image, Govulncheck sees which Go vulnerabilities are
@@ -104,10 +104,10 @@ generated CodeQL workflows.
 - Self-hosted runners must be new enough for the Node 24 runtime used by
   `dependency-review-action` v5.
 
-### Branch ruleset for `main`
+### Branch rulesets for `dev` and `main`
 
 - Require a pull request before merging.
-- Block direct pushes (except an audited break-glass role).
+- Block direct and force pushes (except an audited break-glass role).
 - Require status checks:
   - `go-check / Test`
   - `go-check / Integration Test` (if the service runs them)
@@ -156,14 +156,13 @@ vulnerabilities, SARIF upload failures, runner cost, and Dependabot PR behaviour
 - Dependency Review: start at `critical`, then raise to `high`.
 - Enable Code Scanning merge protection at High/Critical.
 - Make `go-security / Security Gate` a required check.
-- Block direct pushes to `main`.
+- Block direct pushes to both `dev` and `main`.
 - Enable `license-enforce` only after Legal approves the allowlist and the exception workflow.
 
-### Phase 3 — Main and scheduled scans (1 day)
+### Phase 3 — Release and scheduled scans (1 day)
 
-Add `go-security` to `build.yml`, make `docker-build` and `release-binary` depend on it, add
-`security-scheduled.yml` with a staggered weekly cron, and add `go-security` to the `notify`
-job's `needs` (without making `notify` a required check).
+Use the public `release.yml`, add `security-scheduled.yml` with a staggered
+weekly cron, and keep notifications outside required checks.
 
 ### Phase 4 — Full rollout
 
@@ -179,7 +178,7 @@ All third-party actions are pinned to a full commit SHA with a readable version 
 |-----|---------|
 | `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1` | v7.0.1 |
 | `actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e` | v7.0.0 |
-| `github/codeql-action/*@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81` | v4.37.3 |
+| `github/codeql-action/*@5595ccaf912efad79be6eef63a5619ff05969be3` | v4.37.6 |
 | `actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294` | v5.0.0 |
 | `golang.org/x/vuln/cmd/govulncheck` | `v1.6.0` |
 
@@ -188,10 +187,9 @@ ecosystem in this repository.
 
 Inside `go-security.yml`, the nested workflows are referenced with relative paths
 (`./.github/workflows/codeql.yml`) so they always resolve to the same commit as the aggregate.
-Callers in service repositories currently use `@main`, matching the convention of the other
-workflows here. If you later move to pinned callers, pin the aggregate to a full SHA with a
-`# gha-workflows vX.Y.Z` comment, cut a release tag, never force-move a tag, and let
-Dependabot/Renovate raise the update PRs.
+Examples use `@v2` for readability. Production callers pin the aggregate to the
+full commit SHA behind the release tag and let Dependabot/Renovate raise update
+pull requests.
 
 ## Exception process
 
@@ -222,6 +220,5 @@ its own.
   must eventually scan itself. It cannot call `go-security.yml` to do so — there is no `go.mod`
   here, so `codeql-go` and `govulncheck` would fail. The self-CI workflow must call
   `codeql.yml` directly with `language: actions` and `build-mode: none`.
-- **Internal composite actions are still referenced as `@main`** in `go-check.yml`,
-  `gitleaks.yml` and `status.yml`. The security workflows added here use no composite actions,
-  so they are fully pinned; the older workflows are not.
+- **`status.yml` still references its Slack composite at `@main`.** It is an
+  optional reporting workflow and is outside the v2 artifact trust path.

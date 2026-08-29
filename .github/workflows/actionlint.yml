@@ -1,7 +1,7 @@
 name: Lint
 
 # Self-CI: lint this repo's own workflow files with actionlint on every PR and
-# push to main, so a broken reusable workflow is caught before consumers pull @main.
+# push to main, so a broken reusable workflow is caught before a release is tagged.
 
 on:
   pull_request:
