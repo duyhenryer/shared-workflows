@@ -98,9 +98,9 @@ jobs:
           mode="$SCAN_MODE"
           if [ "$mode" = auto ]; then
             if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-              mode=diff
+              mode='diff'
             else
-              mode=full
+              mode='full'
             fi
           fi
           if [[ "$mode" != diff && "$mode" != full ]]; then
